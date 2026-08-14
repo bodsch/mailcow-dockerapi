@@ -1,208 +1,208 @@
-# Abweichungen von der Python-Fassung
+# Deviations from the Python implementation
 
-Die Go-Fassung ist als Ersatz ohne Anpassung am mailcow-Frontend gedacht:
-gleiche Routen, gleiche JSON-Strukturen, gleicher PubSub-Vertrag, Statuscode
-immer 200. Dieses Dokument hält fest, wo das Verhalten dennoch abweicht — und
-warum.
+The Go implementation is meant as a replacement that needs no change to the
+mailcow frontend: same routes, same JSON structures, same PubSub contract, status
+code always 200. This document records where the behaviour differs anyway — and
+why.
 
-Referenzen verweisen auf `original/dockerapi/`.
+References point at `original/dockerapi/`.
 
-## 1. Behobene Fehler
+## 1. Fixed bugs
 
-Diese Stellen konnten in der Python-Fassung zu einer Ausnahme, einem
-unerwünschten Kommando oder einer hängenden Anfrage führen.
+These places could lead to an exception, an unintended command or a hanging
+request in the Python implementation.
 
-### 1.1 Endloses Warten auf Messwerte
+### 1.1 Waiting forever for measurements
 
-`main.py:75` und `main.py:187` warteten in `while True` darauf, dass ein
-Schlüssel in Redis auftaucht, ohne Abbruchbedingung. Blieb er aus — weil Redis
-nicht erreichbar war, der Sammelvorgang scheiterte oder die Container-Kennung
-ungültig war — kehrte die Anfrage nie zurück.
+`main.py:75` and `main.py:187` waited in a `while True` for a key to appear in
+Redis, with no way out. When it never did — because Redis was unreachable, the
+collection failed, or the container id was invalid — the request never returned.
 
-**Jetzt:** `internal/stats` bricht nach `DOCKERAPI_STATS_TIMEOUT` (Vorgabe 30 s)
-ab und meldet die Ursache des Sammelvorgangs, ersatzweise
-`timeout waiting for stats`.
+**Now:** `internal/stats` gives up after `DOCKERAPI_STATS_TIMEOUT` (default 30 s)
+and reports the collection's cause, falling back to `timeout waiting for stats`.
 
-### 1.2 Ungültige Container-Kennung bei `/container/{id}/stats/update`
+### 1.2 Invalid container id at `/container/{id}/stats/update`
 
-Der Handler in `main.py:178` prüfte die Kennung nicht; die Prüfung steckte in
-`get_container_stats` (`DockerApi.py:547`), das bei ungültiger Eingabe nichts
-nach Redis schrieb. Ergebnis war der Endlos-Wartezustand aus 1.1.
+The handler in `main.py:178` did not validate the id; the check lived in
+`get_container_stats` (`DockerApi.py:547`), which wrote nothing to Redis for
+invalid input. The result was the endless wait from 1.1.
 
-**Jetzt:** Die Prüfung erfolgt im Handler, die Antwort lautet
+**Now:** The check happens in the handler and the response is
 `{"type": "danger", "msg": "no or invalid id defined"}`.
 
-### 1.3 `postsuper` ohne Argumente
+### 1.3 `postsuper` with no arguments
 
-`DockerApi.py:88` (und drei gleichartige Stellen) band das Ergebnis von
-`filter()` an eine Variable und prüfte diese auf Wahrheitswert. Ein Generator
-ist in Python immer wahr. Bestand `items` ausschließlich aus ungültigen
-Queue-IDs, lief `postsuper` mit leerer Argumentliste.
+`DockerApi.py:88` (and three similar places) bound the result of `filter()` to a
+variable and tested it for truthiness. A generator is always true in Python. When
+`items` consisted of nothing but invalid queue ids, `postsuper` ran with an empty
+argument list.
 
-**Jetzt:** Eine leere Auswahl liefert
-`{"type": "danger", "msg": "no valid queue ids given"}`; es wird kein Kommando
-abgesetzt.
+**Now:** An empty selection returns
+`{"type": "danger", "msg": "no valid queue ids given"}`; no command is issued.
 
-### 1.4 Nicht importiertes `traceback`
+### 1.4 `traceback` was never imported
 
-`DockerApi.py:615` rief im Fehlerpfad von `exec_cmd_container`
-`traceback.print_exc` auf, ohne das Modul zu importieren — der Fehlerpfad
-scheiterte selbst mit einem `NameError`.
+`DockerApi.py:615` called `traceback.print_exc` in the error path of
+`exec_cmd_container` without importing the module — the error path failed with a
+`NameError` of its own.
 
-**Jetzt:** Reguläre Fehlerbehandlung mit Protokollierung.
+**Now:** Regular error handling with logging.
 
-### 1.5 Unbelegter Methodenname im PubSub-Empfang
+### 1.5 Unbound method name in the PubSub receiver
 
-Fehlten bei `post_action: exec` die Felder `cmd`, `task` oder `request`, blieb
-`api_call_method_name` in `main.py:232` unbelegt; der folgende Zugriff löste
-einen `NameError` aus.
+When `post_action: exec` arrived without `cmd`, `task` or `request`,
+`api_call_method_name` stayed unbound in `main.py:232`; the following access
+raised a `NameError`.
 
-**Jetzt:** Die Felder werden vorab geprüft; das Protokoll nennt das fehlende
-Feld (`api call: cmd missing` und so weiter).
+**Now:** The fields are validated up front; the log names the missing one
+(`api call: cmd missing`, and so on).
 
-### 1.6 Wettläufe auf gemeinsamem Zustand
+### 1.6 Races on shared state
 
-`host_stats_isUpdating` (Merker) und `containerIds_to_update` (Liste) wurden
-aus mehreren asyncio-Aufgaben ohne Sperre verändert. `list.remove` konnte
-zudem einen `ValueError` auslösen (`DockerApi.py:575`).
+`host_stats_isUpdating` (a flag) and `containerIds_to_update` (a list) were
+modified from several asyncio tasks without a lock. `list.remove` could also
+raise a `ValueError` (`DockerApi.py:575`).
 
-**Jetzt:** `internal/stats` verwaltet laufende Sammelvorgänge unter einer
-Sperre. Gleichzeitige Anfragen lösen einen Vorgang aus und teilen sich das
-Ergebnis. Die Tests laufen mit `-race`.
+**Now:** `internal/stats` tracks running collections under a lock. Concurrent
+requests trigger one collection and share its result. The tests run with `-race`.
 
-### 1.7 Ausnahmen beim Zerlegen der ACL-Ausgabe
+### 1.7 Exceptions while parsing the ACL output
 
-`DockerApi.py:441` zerlegte jede Zeile mit `acl.split(maxsplit=1)` und griff
-auf `split('=')[1]` zu. Eine Zeile ohne Leerraum ergab einen `ValueError`, eine
-ohne Gleichheitszeichen einen `IndexError` — beides brach die gesamte Anfrage ab.
+`DockerApi.py:441` split every line with `acl.split(maxsplit=1)` and indexed
+`split('=')[1]`. A line without whitespace produced a `ValueError`, one without an
+equals sign an `IndexError` — either aborted the whole request.
 
-**Jetzt:** Solche Zeilen werden übergangen, die übrigen Einträge kommen durch.
+**Now:** Such lines are skipped and the remaining entries come through.
 
-### 1.8 `postcat` ohne Treffer
+### 1.8 `postcat` without a match
 
-`DockerApi.py:126` prüfte `postcat_return`, das bei leerer Trefferliste nie
-zugewiesen wurde — ein `NameError`.
+`DockerApi.py:126` checked `postcat_return`, which was never assigned when the
+match list was empty — a `NameError`.
 
-**Jetzt:** Es gilt die Antwort aus 2.1.
+**Now:** The response from 2.1 applies.
 
-### 1.9 Unbekannte Action meldete einen internen Python-Fehler
+### 1.9 An unknown action reported an internal Python error
 
-`main.py:159` hinterlegte für einen nicht auflösbaren Namen einen Ersatzaufruf:
+`main.py:159` supplied a fallback for a name that did not resolve:
 
 ```python
 api_call_method = getattr(dockerapi, name, lambda container_id: Response(...))
 return api_call_method(request_json, container_id=container_id)
 ```
 
-Der Ersatzaufruf nimmt einen Positionsparameter namens `container_id`, wird
-aber mit `request_json` an dieser Position **und** zusätzlich mit
-`container_id=` als Schlüsselwort aufgerufen. Python bricht mit
-`TypeError: got multiple values for argument 'container_id'` ab; die
-umgebende Fehlerbehandlung reicht diesen Text als `msg` weiter.
+The fallback takes a positional parameter named `container_id` but is called with
+`request_json` in that position **and** with `container_id=` as a keyword. Python
+raises `TypeError: got multiple values for argument 'container_id'`, and the
+surrounding error handling passes that text on as `msg`.
 
-Die vorgesehene Meldung `container_post - unknown api call` erschien dadurch
-nie. Der Vergleichslauf gegen die laufende Python-Fassung liefert:
+The intended message `container_post - unknown api call` therefore never appeared.
+The comparison run against the live Python implementation shows:
 
 ```
 py: {"type": "danger", "msg": "post_containers.<locals>.<lambda>() got multiple values for argument 'container_id'"}
 go: {"type": "danger", "msg": "container_post - unknown api call"}
 ```
 
-**Jetzt:** Die im Original vorgesehene Meldung.
+**Now:** The message the original intended.
 
-## 2. Sichtbare Verhaltensänderungen
+## 2. Visible behaviour changes
 
-Diese Punkte ändern die Antwort in Fällen, in denen die Python-Fassung kein
-brauchbares Ergebnis lieferte.
+These change the response in cases where the Python implementation produced no
+usable result.
 
-### 2.1 Kein passender Container
+### 2.1 No matching container
 
-Die meisten Actions kehrten innerhalb der Schleife über die Trefferliste
-zurück. War die Liste leer, lieferte die Funktion implizit `None`, und der
-HTTP-Rumpf lautete `null`.
+Most actions returned from inside the loop over the match list. When that list was
+empty the function implicitly returned `None`, and the HTTP body was `null`.
 
-**Jetzt:** `{"type": "danger", "msg": "no container found"}`.
+**Now:** `{"type": "danger", "msg": "no container found"}`.
 
-Ausgenommen sind `stop`, `start` und `restart`: sie melden weiterhin Erfolg,
-auch wenn nichts zutraf. mailcow stoppt darüber Container, die bereits
-gestoppt sind.
+`stop`, `start` and `restart` are exempt: they still report success even when
+nothing matched. mailcow uses them to stop containers that are already stopped.
 
-### 2.2 Fehlende Pflichtfelder
+### 2.2 Missing required fields
 
-Fehlte ein Feld im Rumpf, endete die Action in Python entweder mit einem
-`KeyError` (abgefangen zu `{"type": "danger", "msg": "'feldname'"}`) oder
-lieferte `null`.
+When a field was missing from the body, the action either ended in a `KeyError`
+(caught into `{"type": "danger", "msg": "'fieldname'"}`) or returned `null`.
 
-**Jetzt:** Eine benannte Meldung, etwa
+**Now:** A named message, such as
 `{"type": "danger", "msg": "maildir is missing"}`.
 
-### 2.3 `container_post__stats` enthält `precpu_stats`
+### 2.3 `container_post__stats` includes `precpu_stats`
 
-`DockerApi.py:76` entnahm den ersten Datensatz eines laufenden Stream. Dieser
-enthält noch keine Vormessung, weshalb sich daraus keine CPU-Auslastung
-berechnen ließ.
+`DockerApi.py:76` took the first record of a running stream. That one carries no
+previous sample, so no CPU load could be computed from it.
 
-**Jetzt:** Es wird dieselbe Abfrage verwendet wie für
-`/container/{id}/stats/update` — mit gefülltem `precpu_stats`. Die Antwort
-enthält damit mehr, nicht weniger.
+**Now:** The same query as for `/container/{id}/stats/update` is used — with
+`precpu_stats` populated. The response therefore holds more, not less.
 
-### 2.4 Maskierte Werte in der ACL-Antwort
+### 2.4 Quoted values in the ACL response
 
-`DockerApi.py:423` maskierte `id`, `user` und `mailbox` für die Shell und
-übernahm die maskierten Zeichenketten anschließend unverändert in die
-JSON-Antwort. Ein Postfach mit Anführungszeichen erschien dort verfälscht.
+`DockerApi.py:423` quoted `id`, `user` and `mailbox` for the shell and then put
+the quoted strings into the JSON response unchanged. A mailbox containing quotes
+appeared there mangled.
 
-**Jetzt:** Die Maskierung betrifft nur das Kommando; die Antwort führt die
-Originalwerte.
+**Now:** The quoting applies to the command only; the response carries the
+original values.
 
-### 2.5 Reihenfolge in `/containers/json`
+### 2.5 Ordering in `/containers/json`
 
-Python behielt die Einfügereihenfolge der Container bei, Gos JSON-Kodierung
-sortiert Objektschlüssel. Für die Auswertung ist das ohne Belang — `json_decode`
-in PHP liefert ein assoziatives Array.
+Python preserved the insertion order of the containers, while Go's JSON encoder
+sorts object keys. This does not matter for the consumer — `json_decode` in PHP
+returns an associative array.
 
-## 3. Bewusst beibehaltene Eigenheiten
+### 2.6 Docker errors name the operation
 
-Diese Punkte wirken wie Fehler, bleiben aber unverändert, weil das Frontend
-darauf aufbaut.
+Errors from the daemon are wrapped with the operation that failed, so the `msg`
+field reads `listing containers: Cannot connect to the Docker daemon` rather than
+the bare driver message. The `type` field and the status code are unchanged.
 
-- **`system__df` liefert eine nackte Zeichenkette.** FastAPI kodierte den
-  Rückgabewert seinerseits als JSON, der Rumpf lautet also `"50G,20G,..."`
-  einschließlich Anführungszeichen — anders als bei jeder anderen Action.
-  Im Fehlerfall `"0,0,0,0,0,0"`.
-- **Statuscode immer 200.** Auch Fehler kommen mit 200; ausgewertet wird das
-  Feld `type`.
-- **`maildir__move` hängt `_index` nur an das Ziel an.** Quelle ist
-  `/var/vmail_index/<name>`, Ziel `/var/vmail_index/<name>_index`
+## 3. Deliberately preserved quirks
+
+These look like bugs but stay as they are, because the frontend builds on them.
+
+- **`system__df` returns a bare string.** FastAPI encoded the return value as JSON
+  in turn, so the body reads `"50G,20G,..."` including the quotes — unlike every
+  other action. On failure, `"0,0,0,0,0,0"`.
+- **Status code always 200.** Errors come with 200 too; what is evaluated is the
+  `type` field.
+- **`maildir__move` appends `_index` to the destination only.** The source is
+  `/var/vmail_index/<name>`, the destination `/var/vmail_index/<name>_index`
   (`DockerApi.py:363`).
-- **`mailq__deliver` prüft die Exit-Codes nicht** und meldet stets
+- **`mailq__deliver` does not check the exit codes** and always reports
   `Scheduled immediate delivery` (`DockerApi.py:160`).
-- **Der Namensraum der Actions** (`container_post__exec__mailq__delete` und so
-  weiter) bleibt Zeichen für Zeichen erhalten; ein Test gleicht ihn gegen
-  `original/dockerapi/modules/DockerApi.py` ab.
-- **Feldreihenfolge und Einrückung** der JSON-Antworten entsprechen
+- **The action namespace** (`container_post__exec__mailq__delete` and so on) is
+  preserved character for character; a test compares it against
+  `original/dockerapi/modules/DockerApi.py`.
+- **Field order and indentation** of the JSON responses match
   `json.dumps(..., indent=4)`.
+- **The log format** stays `LEVEL:     message` by default, because operators have
+  built their log processing around it. `LOG_FORMAT=json` switches to structured
+  output.
 
-## 4. Technische Unterschiede ohne Auswirkung auf die Schnittstelle
+## 4. Technical differences with no effect on the interface
 
-- **Ein Docker-Client statt zwei.** Die Python-Fassung hielt `docker` und
-  `aiodocker` parallel.
-- **Kommandos ohne Shell, wo möglich.** Wo keine Pipe, Umleitung oder
-  Bedingung nötig ist, geht das Argv direkt an `docker exec`. Für `system__df`,
-  `system__mysql_tzinfo_to_sql`, `maildir__cleanup`, `maildir__move` und den
-  Rspamd-Wechsel bleibt eine Shell nötig; dort maskiert eine getestete Funktion
-  (`internal/actions/shell.go`, mit Fuzz-Test gegen eine echte `sh`).
-- **`\W` bei `maildir__cleanup`.** Pythons `\W` ist Unicode-bewusst, Gos nicht.
-  Die Zeichenklasse ist deshalb als `[^\p{L}\p{N}_]+` ausgeschrieben, damit
-  Postfächer mit Umlauten denselben Verzeichnisnamen ergeben.
-- **Queue-ID-Prüfung etwas strenger.** Pythons `$` in `^[0-9a-fA-F]+$` lässt
-  einen abschließenden Zeilenumbruch zu, Gos `$` nicht.
-- **`isalnum` auf ASCII beschränkt.** Pythons `str.isalnum()` akzeptiert
-  Buchstaben aller Schriftsysteme. Docker-Kennungen sind hexadezimal; für
-  gültige Eingaben ändert sich nichts.
-- **Zertifikat aus dem Programm.** `docker-entrypoint.sh` und `openssl`
-  entfallen; `internal/tlsgen` erzeugt dasselbe Material (RSA 4096, SHA-256,
-  3650 Tage, `CN=dockerapi`, `O=mailcow`, `subjectAltName=DNS:dockerapi`).
-  Ein vorhandenes Paar wird weiterverwendet.
-- **Begrenzter Anfragerumpf.** Höchstens 4 MiB; FastAPI kannte keine Grenze.
-- **Geordnetes Beenden** bei SIGINT und SIGTERM.
+- **One Docker client instead of two.** The Python implementation kept `docker`
+  and `aiodocker` side by side.
+- **Commands without a shell where possible.** Where no pipe, redirection or
+  conditional is needed, the argv goes straight to `docker exec`. For
+  `system__df`, `system__mysql_tzinfo_to_sql`, `maildir__cleanup`,
+  `maildir__move` and the rspamd password change a shell is still required; there
+  a tested function does the quoting (`internal/actions/shell.go`, fuzzed against
+  a real `sh`).
+- **`\W` in `maildir__cleanup`.** Python's `\W` is Unicode-aware, Go's is not. The
+  character class is therefore spelled out as `[^\p{L}\p{N}_]+`, so mailboxes with
+  non-ASCII letters end up under the same directory name.
+- **The queue id check is slightly stricter.** Python's `$` in `^[0-9a-fA-F]+$`
+  allows a trailing newline, Go's does not.
+- **`isalnum` limited to ASCII.** Python's `str.isalnum()` accepts letters of every
+  script. Docker ids are hexadecimal; nothing changes for valid input.
+- **`REDIS_SLAVEOF_PORT` has to be a number.** A typo now fails at startup instead
+  of surfacing later as a connection error.
+- **The certificate comes from the program.** `docker-entrypoint.sh` and `openssl`
+  are gone; `internal/tlsgen` produces the same material (RSA 4096, SHA-256, 3650
+  days, `CN=dockerapi`, `O=mailcow`, `subjectAltName=DNS:dockerapi`). An existing
+  pair is reused.
+- **Bounded request body.** At most 4 MiB; FastAPI had no limit.
+- **Graceful shutdown** on SIGINT and SIGTERM.
+- **Startup waits for Redis** rather than answering requests it cannot serve.

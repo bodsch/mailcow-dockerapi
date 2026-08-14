@@ -13,8 +13,8 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
-// SystemHost liest echte Systemwerte; geprüft wird die Plausibilität und vor
-// allem das Format, auf das die mailcow-Oberfläche baut.
+// SystemHost reads real system values; what is checked is their plausibility and,
+// above all, the format the mailcow UI builds on.
 func TestSystemHostCollect(t *testing.T) {
 	fixed := time.Date(2026, 8, 14, 9, 5, 3, 0, time.UTC)
 	h := SystemHost{Now: func() time.Time { return fixed }}
@@ -25,10 +25,10 @@ func TestSystemHostCollect(t *testing.T) {
 	}
 
 	if got.CPU.Cores < 1 {
-		t.Errorf("Cores = %d, want mindestens 1", got.CPU.Cores)
+		t.Errorf("Cores = %d, want at least 1", got.CPU.Cores)
 	}
 	if got.CPU.Usage < 0 || got.CPU.Usage > 100*float64(got.CPU.Cores) {
-		t.Errorf("Usage = %v, unplausibel", got.CPU.Usage)
+		t.Errorf("Usage = %v, implausible", got.CPU.Usage)
 	}
 	if got.Memory.Total == 0 {
 		t.Error("Memory.Total = 0")
@@ -37,32 +37,31 @@ func TestSystemHostCollect(t *testing.T) {
 		t.Errorf("Memory.Usage = %v, want 0..100", got.Memory.Usage)
 	}
 	if got.Uptime <= 0 {
-		t.Errorf("Uptime = %v, want positiv", got.Uptime)
+		t.Errorf("Uptime = %v, want a positive value", got.Uptime)
 	}
 
 	if got.SystemTime != "14.08.2026 09:05:03" {
 		t.Errorf("SystemTime = %q, want %q", got.SystemTime, "14.08.2026 09:05:03")
 	}
 
-	// psutil.swap_memory() ist ein benanntes Tupel mit sechs Feldern.
+	// psutil.swap_memory() is a named tuple with six fields.
 	if len(got.Memory.Swap) != 6 {
-		t.Errorf("Swap hat %d Felder, want 6: %v", len(got.Memory.Swap), got.Memory.Swap)
+		t.Errorf("Swap has %d fields, want 6: %v", len(got.Memory.Swap), got.Memory.Swap)
 	}
 }
 
-// platform.machine() in Python liefert dasselbe wie uname -m. Das ist das
-// verlässlichste Orakel: auf Linux/arm64 lautet der Wert aarch64, auf
-// Darwin/arm64 dagegen arm64 – eine feste Erwartung wäre auf einer der beiden
-// Plattformen falsch.
+// platform.machine() in Python returns the same thing as uname -m. That is the most
+// reliable oracle: on Linux/arm64 the value is aarch64, on Darwin/arm64 it is arm64 —
+// a fixed expectation would be wrong on one of the two platforms.
 func TestSystemHostArchitectureMatchesUname(t *testing.T) {
 	uname, err := exec.LookPath("uname")
 	if err != nil {
-		t.Skip("uname nicht verfuegbar")
+		t.Skip("uname is not available")
 	}
 
 	out, err := exec.Command(uname, "-m").Output()
 	if err != nil {
-		t.Skipf("uname -m fehlgeschlagen: %v", err)
+		t.Skipf("uname -m failed: %v", err)
 	}
 	want := strings.TrimSpace(string(out))
 
@@ -76,10 +75,10 @@ func TestSystemHostArchitectureMatchesUname(t *testing.T) {
 	}
 }
 
-// Auf Linux – dort läuft der Dienst – darf niemals GOARCH herauskommen.
+// On Linux — where the service runs — the answer must never be GOARCH.
 func TestSystemHostDoesNotReportGOARCHOnLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skipf("nur auf Linux aussagekraeftig (hier: %s)", runtime.GOOS)
+		t.Skipf("only meaningful on Linux (here: %s)", runtime.GOOS)
 	}
 
 	got, err := SystemHost{}.Collect(context.Background())
@@ -88,13 +87,13 @@ func TestSystemHostDoesNotReportGOARCHOnLinux(t *testing.T) {
 	}
 
 	if got.Architecture == runtime.GOARCH {
-		t.Errorf("Architecture = %q entspricht GOARCH – erwartet wird die Kernel-Schreibweise",
+		t.Errorf("Architecture = %q equals GOARCH — the kernel spelling is expected",
 			got.Architecture)
 	}
 }
 
-// Die kodierte Form muss der von json.dumps entsprechen: swap als Array,
-// die Felder in der Reihenfolge des Originals.
+// The encoded form has to match json.dumps: swap as an array, the fields in the
+// order of the original.
 func TestSystemHostEncodesLikePython(t *testing.T) {
 	h := SystemHost{Now: func() time.Time { return time.Date(2026, 8, 14, 9, 5, 3, 0, time.UTC) }}
 
@@ -108,7 +107,7 @@ func TestSystemHostEncodesLikePython(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 
-	// Feldreihenfolge wie im dict aus DockerApi.py:521.
+	// Field order as in the dict from DockerApi.py:521.
 	order := regexp.MustCompile(
 		`^\{"cpu":\{"cores":\d+,"usage":[-\d.e+]+\},` +
 			`"memory":\{"total":\d+,"usage":[-\d.e+]+,"swap":\[[^\]]*\]\},` +
@@ -116,7 +115,7 @@ func TestSystemHostEncodesLikePython(t *testing.T) {
 	)
 
 	if !order.Match(raw) {
-		t.Errorf("Kodierung weicht ab:\n%s", raw)
+		t.Errorf("the encoding differs:\n%s", raw)
 	}
 }
 
@@ -126,7 +125,7 @@ func TestSwapTupleOrderAndLength(t *testing.T) {
 
 	want := []any{uint64(2048), uint64(1024), uint64(1024), 50.0, uint64(7), uint64(9)}
 	if len(got) != len(want) {
-		t.Fatalf("Laenge = %d, want %d", len(got), len(want))
+		t.Fatalf("length = %d, want %d", len(got), len(want))
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -144,7 +143,7 @@ func TestFirstOrZero(t *testing.T) {
 	}
 }
 
-// swapFixture liefert feste Auslagerungswerte für die Reihenfolgeprüfung.
+// swapFixture supplies fixed swap values for the ordering check.
 var swapFixture = mem.SwapMemoryStat{
 	Total:       2048,
 	Used:        1024,

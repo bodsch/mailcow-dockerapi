@@ -6,11 +6,11 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// SogoRenameUser entspricht container_post__exec__sogo__rename_user.
+// SogoRenameUser implements container_post__exec__sogo__rename_user.
 //
-// Der Methodenname im Original lautet container_post__exec__sogo__rename_user,
-// der Kommentar darüber spricht von "task: rename" – maßgeblich ist der Name,
-// denn nach ihm wird aufgelöst.
+// The method in the original is named container_post__exec__sogo__rename_user
+// while the comment above it says "task: rename" — the name is what matters, since
+// that is what the lookup resolves.
 func SogoRenameUser(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	oldUsername, ok := req.String("old_username")
 	if !ok {

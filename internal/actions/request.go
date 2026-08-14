@@ -2,16 +2,16 @@ package actions
 
 import "encoding/json"
 
-// Request ist der dekodierte JSON-Rumpf einer Anfrage.
+// Request is the decoded JSON body of a request.
 //
-// DockerApi.py arbeitete direkt auf dem dict und griff teilweise ohne
-// Existenzprüfung zu (etwa request_json['id'] in doveadm__get_acl), was bei
-// fehlendem Feld zu einem KeyError führte. Die Zugriffsmethoden hier melden
-// stattdessen, ob ein Feld nutzbar ist.
+// DockerApi.py worked on the dict directly and sometimes indexed it without
+// checking (request_json['id'] in doveadm__get_acl, for instance), which raised a
+// KeyError when the field was absent. The accessors here report whether a field is
+// usable instead.
 type Request map[string]any
 
-// ParseRequest dekodiert einen JSON-Rumpf. Ein leerer oder ungültiger Rumpf
-// ergibt eine leere Request – main.py:133 verfuhr genauso.
+// ParseRequest decodes a JSON body. An empty or invalid body yields an empty
+// Request — main.py:133 did the same.
 func ParseRequest(body []byte) Request {
 	var r Request
 	if err := json.Unmarshal(body, &r); err != nil {
@@ -24,13 +24,13 @@ func ParseRequest(body []byte) Request {
 	return r
 }
 
-// Has meldet, ob der Schlüssel vorhanden ist. Entspricht `'key' in request_json`.
+// Has reports whether the key is present. It matches `'key' in request_json`.
 func (r Request) Has(key string) bool {
 	_, ok := r[key]
 	return ok
 }
 
-// String liefert einen Zeichenkettenwert.
+// String returns a string value.
 func (r Request) String(key string) (string, bool) {
 	v, ok := r[key]
 	if !ok {
@@ -41,18 +41,17 @@ func (r Request) String(key string) (string, bool) {
 	return s, ok
 }
 
-// NonEmptyString liefert einen Zeichenkettenwert, der nicht leer ist.
+// NonEmptyString returns a string value that is not empty.
 //
-// Mehrere Actions prüften in Python auf Wahrheitswert (`if user and mailbox`),
-// wodurch der leere String wie ein fehlendes Feld wirkte.
+// Several actions tested for truthiness in Python (`if user and mailbox`), which
+// made the empty string behave like a missing field.
 func (r Request) NonEmptyString(key string) (string, bool) {
 	s, ok := r.String(key)
 	return s, ok && s != ""
 }
 
-// Strings liefert eine Liste von Zeichenketten. Elemente anderen Typs werden
-// übergangen – in Python wären sie an der nachgelagerten Regex-Prüfung
-// gescheitert.
+// Strings returns a list of strings. Elements of another type are skipped — in
+// Python they would have failed the regex check further down.
 func (r Request) Strings(key string) ([]string, bool) {
 	v, ok := r[key]
 	if !ok {

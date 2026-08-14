@@ -6,20 +6,20 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// ReloadDovecot entspricht container_post__exec__reload__dovecot.
+// ReloadDovecot implements container_post__exec__reload__dovecot.
 func ReloadDovecot(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return execGeneric(ctx, env, t, []string{"/usr/sbin/dovecot", "reload"}, "")
 }
 
-// ReloadPostfix entspricht container_post__exec__reload__postfix.
+// ReloadPostfix implements container_post__exec__reload__postfix.
 func ReloadPostfix(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return execGeneric(ctx, env, t, []string{"/usr/sbin/postfix", "reload"}, "")
 }
 
-// ReloadNginx entspricht container_post__exec__reload__nginx.
+// ReloadNginx implements container_post__exec__reload__nginx.
 //
-// Das Original rief hier /bin/sh statt /bin/bash auf – der nginx-Container
-// bringt keine bash mit. Ohne Shell entfällt die Unterscheidung.
+// The original invoked /bin/sh here rather than /bin/bash — the nginx container
+// ships no bash. Without a shell the distinction goes away.
 func ReloadNginx(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return execGeneric(ctx, env, t, []string{"/usr/sbin/nginx", "-s", "reload"}, "")
 }

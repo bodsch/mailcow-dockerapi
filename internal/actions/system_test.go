@@ -10,7 +10,7 @@ import (
 
 func TestFtsRescanForUser(t *testing.T) {
 	fake := newFake()
-	req := Request{"username": "user@beispiel.de"}
+	req := Request{"username": "user@example.org"}
 
 	got := FtsRescan(context.Background(), newEnv(fake), req, byID())
 
@@ -20,7 +20,7 @@ func TestFtsRescanForUser(t *testing.T) {
 }`
 	assertBody(t, got, ContentTypeJSON, want)
 	assertExec(t, fake, 0,
-		[]string{"/usr/bin/doveadm", "fts", "rescan", "-u", "user@beispiel.de"}, "vmail")
+		[]string{"/usr/bin/doveadm", "fts", "rescan", "-u", "user@example.org"}, "vmail")
 }
 
 func TestFtsRescanForAll(t *testing.T) {
@@ -32,15 +32,15 @@ func TestFtsRescanForAll(t *testing.T) {
 	assertExec(t, fake, 0, []string{"/usr/bin/doveadm", "fts", "rescan", "-A"}, "vmail")
 }
 
-// Ist username gesetzt, hat es Vorrang vor all – wie im Original.
+// When username is set it takes precedence over all — as in the original.
 func TestFtsRescanPrefersUsername(t *testing.T) {
 	fake := newFake()
-	req := Request{"username": "user@beispiel.de", "all": true}
+	req := Request{"username": "user@example.org", "all": true}
 
 	FtsRescan(context.Background(), newEnv(fake), req, byID())
 
 	assertExec(t, fake, 0,
-		[]string{"/usr/bin/doveadm", "fts", "rescan", "-u", "user@beispiel.de"}, "vmail")
+		[]string{"/usr/bin/doveadm", "fts", "rescan", "-u", "user@example.org"}, "vmail")
 }
 
 func TestFtsRescanReportsWarningOnFailure(t *testing.T) {
@@ -56,26 +56,26 @@ func TestFtsRescanReportsWarningOnFailure(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Ein Benutzername mit Anführungszeichen darf das Kommando nicht verlassen.
+// A username containing quotes must not escape the command.
 func TestFtsRescanQuotesUsername(t *testing.T) {
 	fake := newFake()
-	req := Request{"username": "o'brien@beispiel.de'; rm -rf /"}
+	req := Request{"username": "o'brien@example.org'; rm -rf /"}
 
 	FtsRescan(context.Background(), newEnv(fake), req, byID())
 
 	call, _ := fake.LastExec()
-	if call.Cmd[4] != "o'brien@beispiel.de'; rm -rf /" {
-		t.Errorf("Argument = %q, want unveraendert", call.Cmd[4])
+	if call.Cmd[4] != "o'brien@example.org'; rm -rf /" {
+		t.Errorf("argument = %q, want it unchanged", call.Cmd[4])
 	}
-	// Ohne Shell im Argv kann nichts interpretiert werden.
+	// With no shell in the argv nothing can be interpreted.
 	for _, arg := range call.Cmd {
 		if arg == "/bin/bash" || arg == "-c" {
-			t.Errorf("Kommando laeuft ueber eine Shell: %v", call.Cmd)
+			t.Errorf("the command runs through a shell: %v", call.Cmd)
 		}
 	}
 }
 
-// Die Antwort ist eine nackte Zeichenkette, die FastAPI als JSON kodierte.
+// The response is a bare string, which FastAPI encoded as JSON.
 func TestDFReturnsQuotedString(t *testing.T) {
 	fake := newFake()
 	fake.ExecResults = []dockerclient.ExecResult{
@@ -93,7 +93,7 @@ func TestDFReturnsQuotedString(t *testing.T) {
 
 func TestDFFallbackOnFailure(t *testing.T) {
 	fake := newFake()
-	fake.ExecResults = []dockerclient.ExecResult{{ExitCode: 1, Output: []byte("df: kein Zugriff")}}
+	fake.ExecResults = []dockerclient.ExecResult{{ExitCode: 1, Output: []byte("df: permission denied")}}
 	req := Request{"dir": "/var/vmail"}
 
 	got := DF(context.Background(), newEnv(fake), req, byID())
@@ -111,7 +111,7 @@ func TestDFQuotesDirectory(t *testing.T) {
 	want := "/bin/df -H '/var/vmail'\\''; touch /tmp/x; '\\''' | /usr/bin/tail -n1" +
 		" | /usr/bin/tr -s [:blank:] | /usr/bin/tr ' ' ','"
 	if call.Cmd[2] != want {
-		t.Errorf("Skript =\n%s\nwant\n%s", call.Cmd[2], want)
+		t.Errorf("script =\n%s\nwant\n%s", call.Cmd[2], want)
 	}
 }
 
@@ -145,11 +145,11 @@ func TestMySQLUpgradeAlreadyUpgraded(t *testing.T) {
 		[]string{"/usr/bin/mysql_upgrade", "-uroot", "-p" + testDBRoot}, "mysql")
 
 	if len(fake.Restarted) != 0 {
-		t.Errorf("Container wurde neu gestartet: %v", fake.Restarted)
+		t.Errorf("the container was restarted anyway: %v", fake.Restarted)
 	}
 }
 
-// Wurde tatsächlich aktualisiert, muss der Container neu starten.
+// When an upgrade actually happened, the container has to restart.
 func TestMySQLUpgradeRestartsAfterUpgrade(t *testing.T) {
 	fake := newFake()
 	fake.ExecResults = []dockerclient.ExecResult{
@@ -166,7 +166,7 @@ func TestMySQLUpgradeRestartsAfterUpgrade(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 
 	if len(fake.Restarted) != 1 || fake.Restarted[0] != testContainerID {
-		t.Errorf("Neustarts = %v, want [%s]", fake.Restarted, testContainerID)
+		t.Errorf("restarts = %v, want [%s]", fake.Restarted, testContainerID)
 	}
 }
 
@@ -204,17 +204,17 @@ func TestMySQLTzinfoToSQL(t *testing.T) {
 	assertExec(t, fake, 0, bashCommand(wantScript), "mysql")
 }
 
-// Ein Passwort mit Anführungszeichen darf die Pipeline nicht zerlegen.
+// A password containing quotes must not break the pipeline apart.
 func TestMySQLTzinfoQuotesPassword(t *testing.T) {
 	fake := newFake()
 	env := newEnv(fake)
-	env.DBRoot = "pass'wort"
+	env.DBRoot = "pass'word"
 
 	MySQLTzinfoToSQL(context.Background(), env, Request{}, byID())
 
 	call, _ := fake.LastExec()
-	if !strings.Contains(call.Cmd[2], `-p'pass'\''wort' mysql`) {
-		t.Errorf("Skript =\n%s", call.Cmd[2])
+	if !strings.Contains(call.Cmd[2], `-p'pass'\''word' mysql`) {
+		t.Errorf("script =\n%s", call.Cmd[2])
 	}
 }
 

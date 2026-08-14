@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// testOpts hält den Test schnell; die Länge ist für die geprüften
-// Eigenschaften unerheblich.
+// testOpts keeps the test fast; the key length is irrelevant to the properties
+// being checked.
 var testOpts = Options{KeyBits: 2048}
 
 func parseCert(t *testing.T, certPEM []byte) *x509.Certificate {
@@ -18,7 +18,7 @@ func parseCert(t *testing.T, certPEM []byte) *x509.Certificate {
 
 	block, _ := pem.Decode(certPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
-		t.Fatalf("kein CERTIFICATE-Block: %q", certPEM)
+		t.Fatalf("not a CERTIFICATE block: %q", certPEM)
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
@@ -27,7 +27,7 @@ func parseCert(t *testing.T, certPEM []byte) *x509.Certificate {
 	return cert
 }
 
-// Prüft die Eigenschaften, die docker-entrypoint.sh per openssl gesetzt hat.
+// Checks the properties docker-entrypoint.sh set with openssl.
 func TestGenerateMatchesEntrypoint(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	certPEM, keyPEM, err := Generate(Options{KeyBits: 2048, Now: func() time.Time { return now }})
@@ -56,12 +56,12 @@ func TestGenerateMatchesEntrypoint(t *testing.T) {
 		t.Errorf("NotAfter = %v, want %v", cert.NotAfter, wantNotAfter)
 	}
 	if cert.NotBefore.After(now) {
-		t.Errorf("NotBefore = %v liegt nach now = %v", cert.NotBefore, now)
+		t.Errorf("NotBefore = %v is after now = %v", cert.NotBefore, now)
 	}
 
 	block, _ := pem.Decode(keyPEM)
 	if block == nil || block.Type != "PRIVATE KEY" {
-		t.Fatalf("kein PRIVATE KEY-Block")
+		t.Fatalf("not a PRIVATE KEY block")
 	}
 	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
 		t.Errorf("ParsePKCS8PrivateKey: %v", err)
@@ -79,7 +79,7 @@ func TestGenerateUsesFreshSerial(t *testing.T) {
 	}
 
 	if parseCert(t, a).SerialNumber.Cmp(parseCert(t, b).SerialNumber) == 0 {
-		t.Error("zwei Zertifikate teilen dieselbe Seriennummer")
+		t.Error("two certificates share the same serial number")
 	}
 }
 
@@ -93,18 +93,18 @@ func TestEnsureCreatesAndPersists(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if len(cert.Certificate) == 0 {
-		t.Fatal("leeres Zertifikat")
+		t.Fatal("empty certificate")
 	}
 
 	info, err := os.Stat(keyFile)
 	if err != nil {
-		t.Fatalf("Schluessel nicht geschrieben: %v", err)
+		t.Fatalf("the key was not written: %v", err)
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("Schluesselrechte = %o, want 600", perm)
+		t.Errorf("key permissions = %o, want 600", perm)
 	}
 	if _, err := os.Stat(certFile); err != nil {
-		t.Fatalf("Zertifikat nicht geschrieben: %v", err)
+		t.Fatalf("the certificate was not written: %v", err)
 	}
 }
 
@@ -123,7 +123,7 @@ func TestEnsureReusesExistingPair(t *testing.T) {
 	}
 
 	if string(first.Certificate[0]) != string(second.Certificate[0]) {
-		t.Error("Ensure hat ein vorhandenes Paar nicht wiederverwendet")
+		t.Error("Ensure did not reuse an existing pair")
 	}
 }
 
@@ -132,10 +132,10 @@ func TestEnsureReplacesCorruptPair(t *testing.T) {
 	certFile := filepath.Join(dir, "cert.pem")
 	keyFile := filepath.Join(dir, "key.pem")
 
-	if err := os.WriteFile(certFile, []byte("kaputt"), 0o644); err != nil {
+	if err := os.WriteFile(certFile, []byte("broken"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keyFile, []byte("kaputt"), 0o600); err != nil {
+	if err := os.WriteFile(keyFile, []byte("broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,17 +144,17 @@ func TestEnsureReplacesCorruptPair(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if len(cert.Certificate) == 0 {
-		t.Fatal("leeres Zertifikat")
+		t.Fatal("empty certificate")
 	}
 }
 
-// Ohne beschreibbare Pfade muss der Dienst trotzdem starten können.
+// Without writable paths the service still has to be able to start.
 func TestEnsureWorksWithoutWritablePaths(t *testing.T) {
-	cert, err := Ensure("/nicht/existent/cert.pem", "/nicht/existent/key.pem", testOpts)
+	cert, err := Ensure("/does/not/exist/cert.pem", "/does/not/exist/key.pem", testOpts)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if len(cert.Certificate) == 0 {
-		t.Fatal("leeres Zertifikat")
+		t.Fatal("empty certificate")
 	}
 }

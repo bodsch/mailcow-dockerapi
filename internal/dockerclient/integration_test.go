@@ -1,9 +1,9 @@
 //go:build integration
 
-// Diese Tests sprechen einen echten Docker-Daemon an und laufen deshalb nur
-// mit -tags=integration. Sie decken den Teil ab, der sich nicht sinnvoll
-// nachbilden lässt: das Zusammenspiel mit der Engine-API, das Zerlegen des
-// gemultiplexten Exec-Stroms und die interaktive Shell aus DockerApi.py:580.
+// These tests talk to a real Docker daemon and therefore only run with
+// -tags=integration. They cover the part that cannot sensibly be faked: the
+// interplay with the engine API, splitting the multiplexed exec stream, and the
+// interactive shell from DockerApi.py:580.
 //
 //	go test -tags=integration ./internal/dockerclient/
 package dockerclient
@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// testImage ist bewusst klein und bringt eine Shell mit.
+// testImage is deliberately small and ships a shell.
 const testImage = "alpine:3.23"
 
 func newTestClient(t *testing.T) API {
@@ -25,25 +25,25 @@ func newTestClient(t *testing.T) API {
 
 	cli, err := New("")
 	if err != nil {
-		t.Skipf("kein Docker-Daemon erreichbar: %v", err)
+		t.Skipf("no Docker daemon reachable: %v", err)
 	}
 	t.Cleanup(func() { cli.Close() })
 
 	return cli
 }
 
-// startContainer legt einen laufenden Container an und räumt ihn wieder ab.
+// startContainer creates a running container and cleans it up again.
 func startContainer(t *testing.T) (id, name string) {
 	t.Helper()
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker-Kommando nicht verfuegbar")
+		t.Skip("the docker command is not available")
 	}
 
 	if out, err := exec.Command("docker", "image", "inspect", testImage).CombinedOutput(); err != nil {
-		t.Logf("Abbild wird geholt: %s", out)
+		t.Logf("pulling the image: %s", out)
 		if out, err := exec.Command("docker", "pull", testImage).CombinedOutput(); err != nil {
-			t.Skipf("Abbild nicht verfuegbar: %s", out)
+			t.Skipf("the image is not available: %s", out)
 		}
 	}
 
@@ -53,7 +53,7 @@ func startContainer(t *testing.T) (id, name string) {
 	out, err := exec.Command("docker", "run", "-d", "--name", name,
 		testImage, "sleep", "300").CombinedOutput()
 	if err != nil {
-		t.Fatalf("Container starten: %s", out)
+		t.Fatalf("starting the container: %s", out)
 	}
 
 	id = strings.TrimSpace(string(out))
@@ -74,7 +74,7 @@ func TestIntegrationListByID(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(list) != 1 {
-		t.Fatalf("Treffer = %d, want 1", len(list))
+		t.Fatalf("matches = %d, want 1", len(list))
 	}
 	if list[0].ID != id {
 		t.Errorf("ID = %q, want %q", list[0].ID, id)
@@ -90,11 +90,11 @@ func TestIntegrationListByName(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(list) != 1 || list[0].ID != id {
-		t.Fatalf("Treffer = %+v, want genau %s", list, id)
+		t.Fatalf("matches = %+v, want exactly %s", list, id)
 	}
 }
 
-// Der Rohdurchgriff muss die vollständige Inspect-Ausgabe liefern.
+// Passing the raw bytes through has to preserve the complete inspect output.
 func TestIntegrationInspectRawKeepsAllFields(t *testing.T) {
 	cli := newTestClient(t)
 	id, _ := startContainer(t)
@@ -106,24 +106,23 @@ func TestIntegrationInspectRawKeepsAllFields(t *testing.T) {
 
 	var parsed map[string]any
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		t.Fatalf("Inspect-Ausgabe lesen: %v", err)
+		t.Fatalf("reading the inspect output: %v", err)
 	}
 
 	for _, field := range []string{"Id", "State", "Config", "HostConfig", "NetworkSettings"} {
 		if _, ok := parsed[field]; !ok {
-			t.Errorf("Feld %s fehlt in der Inspect-Ausgabe", field)
+			t.Errorf("the field %s is missing from the inspect output", field)
 		}
 	}
 }
 
-// Exec muss stdout und stderr zusammengeführt liefern – darauf baut
-// exec_run_handler auf.
+// Exec has to return stdout and stderr merged — exec_run_handler builds on that.
 func TestIntegrationExecCombinesStreams(t *testing.T) {
 	cli := newTestClient(t)
 	id, _ := startContainer(t)
 
 	res, err := cli.Exec(context.Background(), id, ExecOptions{
-		Cmd: []string{"/bin/sh", "-c", "echo raus; echo fehler >&2"},
+		Cmd: []string{"/bin/sh", "-c", "echo out; echo failure >&2"},
 	})
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
@@ -134,11 +133,11 @@ func TestIntegrationExecCombinesStreams(t *testing.T) {
 	}
 
 	out := string(res.Output)
-	if !strings.Contains(out, "raus") {
-		t.Errorf("stdout fehlt: %q", out)
+	if !strings.Contains(out, "out") {
+		t.Errorf("stdout is missing: %q", out)
 	}
-	if !strings.Contains(out, "fehler") {
-		t.Errorf("stderr fehlt: %q", out)
+	if !strings.Contains(out, "failure") {
+		t.Errorf("stderr is missing: %q", out)
 	}
 }
 
@@ -158,22 +157,21 @@ func TestIntegrationExecReportsExitCode(t *testing.T) {
 	}
 }
 
-// Argumente dürfen von der Shell nicht ausgewertet werden, wenn kein
-// Interpreter im Argv steht.
+// Arguments must not be evaluated by a shell when no interpreter is in the argv.
 func TestIntegrationExecDoesNotInvokeShell(t *testing.T) {
 	cli := newTestClient(t)
 	id, _ := startContainer(t)
 
 	res, err := cli.Exec(context.Background(), id, ExecOptions{
-		Cmd: []string{"/bin/echo", "$(id -u)", "; echo geleakt"},
+		Cmd: []string{"/bin/echo", "$(id -u)", "; echo leaked"},
 	})
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
 
 	out := strings.TrimSpace(string(res.Output))
-	if out != "$(id -u) ; echo geleakt" {
-		t.Errorf("Ausgabe = %q, das Argument wurde ausgewertet", out)
+	if out != "$(id -u) ; echo leaked" {
+		t.Errorf("output = %q, the argument was evaluated", out)
 	}
 }
 
@@ -190,11 +188,11 @@ func TestIntegrationExecAsUser(t *testing.T) {
 	}
 
 	if got := strings.TrimSpace(string(res.Output)); got != "nobody" {
-		t.Errorf("Benutzer = %q, want nobody", got)
+		t.Errorf("user = %q, want nobody", got)
 	}
 }
 
-// Der Pfad, den der Rspamd-Passwortwechsel nutzt.
+// The path the rspamd password change uses.
 func TestIntegrationExecInteractive(t *testing.T) {
 	cli := newTestClient(t)
 	id, _ := startContainer(t)
@@ -209,12 +207,12 @@ func TestIntegrationExecInteractive(t *testing.T) {
 	}
 
 	if !strings.Contains(out, "$2$abcdef") {
-		t.Errorf("Ausgabe = %q, erwarte den Hash", out)
+		t.Errorf("output = %q, expected the hash", out)
 	}
 }
 
-// Zwei aufeinanderfolgende Kommandos über dieselbe Shell – so schreibt und
-// liest der Rspamd-Wechsel die Override-Datei.
+// Two consecutive commands over the same shell — that is how the rspamd change
+// writes and reads back the override file.
 func TestIntegrationExecInteractiveWriteAndReadBack(t *testing.T) {
 	cli := newTestClient(t)
 	id, _ := startContainer(t)
@@ -225,7 +223,7 @@ func TestIntegrationExecInteractiveWriteAndReadBack(t *testing.T) {
 		Command: "/bin/echo 'enable_password = \"$2$test\";' > /tmp/pw.inc && cat /tmp/pw.inc",
 		Timeout: time.Second,
 	}); err != nil {
-		t.Fatalf("ExecInteractive (schreiben): %v", err)
+		t.Fatalf("ExecInteractive (write): %v", err)
 	}
 
 	out, err := cli.ExecInteractive(ctx, id, InteractiveOptions{
@@ -234,16 +232,15 @@ func TestIntegrationExecInteractiveWriteAndReadBack(t *testing.T) {
 		Timeout: time.Second,
 	})
 	if err != nil {
-		t.Fatalf("ExecInteractive (lesen): %v", err)
+		t.Fatalf("ExecInteractive (read): %v", err)
 	}
 
 	if !strings.Contains(out, `enable_password = "$2$test";`) {
-		t.Errorf("Ausgabe = %q", out)
+		t.Errorf("output = %q", out)
 	}
 }
 
-// Die Messwerte müssen precpu_stats enthalten, sonst kann die Oberfläche die
-// CPU-Auslastung nicht berechnen.
+// The sample has to include precpu_stats, or the UI cannot compute CPU load.
 func TestIntegrationStatsIncludePreviousSample(t *testing.T) {
 	cli := newTestClient(t)
 	id, _ := startContainer(t)
@@ -255,20 +252,20 @@ func TestIntegrationStatsIncludePreviousSample(t *testing.T) {
 
 	var parsed map[string]any
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		t.Fatalf("Messwerte lesen: %v (Rohdaten: %s)", err, raw)
+		t.Fatalf("reading the sample: %v (raw: %s)", err, raw)
 	}
 
 	precpu, ok := parsed["precpu_stats"].(map[string]any)
 	if !ok {
-		t.Fatalf("precpu_stats fehlt: %s", raw)
+		t.Fatalf("precpu_stats is missing: %s", raw)
 	}
 
 	usage, ok := precpu["cpu_usage"].(map[string]any)
 	if !ok {
-		t.Fatalf("precpu_stats.cpu_usage fehlt: %s", raw)
+		t.Fatalf("precpu_stats.cpu_usage is missing: %s", raw)
 	}
 	if total, _ := usage["total_usage"].(float64); total == 0 {
-		t.Errorf("precpu_stats.cpu_usage.total_usage ist 0 – die Vormessung fehlt")
+		t.Errorf("precpu_stats.cpu_usage.total_usage is 0 — the previous sample is missing")
 	}
 }
 
@@ -282,10 +279,10 @@ func TestIntegrationTop(t *testing.T) {
 	}
 
 	if len(top.Titles) == 0 {
-		t.Error("Titles ist leer")
+		t.Error("Titles is empty")
 	}
 	if len(top.Processes) == 0 {
-		t.Error("Processes ist leer")
+		t.Error("Processes is empty")
 	}
 }
 
@@ -298,13 +295,13 @@ func TestIntegrationLifecycle(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// Gestoppte Container erscheinen nur mit all=true.
+	// Stopped containers only show up with all=true.
 	running, err := cli.List(ctx, Target{ContainerID: id}, false)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(running) != 0 {
-		t.Errorf("der gestoppte Container erscheint in der Liste der laufenden")
+		t.Errorf("the stopped container shows up in the list of running ones")
 	}
 
 	stopped, err := cli.List(ctx, Target{ContainerID: id}, true)
@@ -312,7 +309,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(stopped) != 1 {
-		t.Fatalf("Treffer mit all=true = %d, want 1", len(stopped))
+		t.Fatalf("matches with all=true = %d, want 1", len(stopped))
 	}
 
 	if err := cli.Start(ctx, id); err != nil {

@@ -6,7 +6,7 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// SieveList entspricht container_post__exec__sieve__list.
+// SieveList implements container_post__exec__sieve__list.
 func SieveList(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	username, ok := req.String("username")
 	if !ok {
@@ -16,7 +16,7 @@ func SieveList(ctx context.Context, env Env, req Request, t dockerclient.Target)
 	return execText(ctx, env, t, []string{"/usr/bin/doveadm", "sieve", "list", "-u", username}, "")
 }
 
-// SievePrint entspricht container_post__exec__sieve__print.
+// SievePrint implements container_post__exec__sieve__print.
 func SievePrint(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	username, ok := req.String("username")
 	if !ok {

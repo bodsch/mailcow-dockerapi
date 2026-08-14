@@ -1,14 +1,15 @@
-# Die portierte Vorlage bleibt lokal.
-# Ohne sie überspringt der Abgleich in internal/actions/registry_test.go;
-# die festgeschriebene Anzahl in TestRegistrySize greift weiterhin.
+# The ported original stays local.
+# Without it the comparison in internal/actions/registry_test.go is skipped;
+# the pinned count in TestRegistrySize still applies.
 original
 
-# Erzeugnisse
-/dockerapi
+# Build artefacts
+bin
+dist
 coverage.out
 
-# Zertifikate, falls lokal erzeugt
+# Certificates, when generated locally
 *.pem
 
-# Fuzz-Korpus mit gefundenen Fällen bleibt erhalten, der Zwischenspeicher nicht
+# The fuzz corpus with found cases is kept, the cache is not
 testdata/fuzz/*/[0-9a-f]*

@@ -6,33 +6,33 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// Die Lifecycle-Actions listen mit all=True und beziehen gestoppte Container
-// mit ein – anders als die exec-Actions, die nur laufende ansprechen.
+// The lifecycle actions list with all=True and include stopped containers —
+// unlike the exec actions, which only address running ones.
 const lifecycleListAll = true
 
-// Stop entspricht container_post__stop.
+// Stop implements container_post__stop.
 //
-// Wie im Original wirkt die Aktion auf alle Treffer der Auswahl, nicht nur
-// auf den ersten.
+// As in the original, the action applies to every match of the selection, not only
+// to the first.
 func Stop(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return forEachContainer(ctx, env, t, env.Docker.Stop)
 }
 
-// Start entspricht container_post__start.
+// Start implements container_post__start.
 func Start(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return forEachContainer(ctx, env, t, env.Docker.Start)
 }
 
-// Restart entspricht container_post__restart.
+// Restart implements container_post__restart.
 func Restart(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return forEachContainer(ctx, env, t, env.Docker.Restart)
 }
 
-// forEachContainer wendet op auf jeden Treffer an.
+// forEachContainer applies op to every match.
 //
-// Findet die Auswahl nichts, meldet das Original trotzdem Erfolg; dieses
-// Verhalten bleibt erhalten, weil mailcow beim Stoppen bereits gestoppter
-// Container darauf baut.
+// When the selection finds nothing the original still reports success; that
+// behaviour is kept, because mailcow relies on it when stopping containers that are
+// already stopped.
 func forEachContainer(
 	ctx context.Context,
 	env Env,
@@ -53,7 +53,7 @@ func forEachContainer(
 	return Success()
 }
 
-// Top entspricht container_post__top: die Prozessliste des ersten Treffers.
+// Top implements container_post__top: the process list of the first match.
 func Top(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	c, errRes := firstContainer(ctx, env, t, lifecycleListAll)
 	if errRes != nil {
@@ -68,8 +68,7 @@ func Top(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result 
 	return JSON(Message{Type: TypeSuccess, Msg: top})
 }
 
-// Stats entspricht container_post__stats: ein einzelnes Messwert-Sample des
-// ersten Treffers.
+// Stats implements container_post__stats: a single sample for the first match.
 func Stats(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	c, errRes := firstContainer(ctx, env, t, lifecycleListAll)
 	if errRes != nil {

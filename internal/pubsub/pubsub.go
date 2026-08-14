@@ -1,24 +1,25 @@
-// Package pubsub empfängt Aufträge über den Redis-Kanal MC_CHANNEL.
+// Package pubsub receives jobs over the Redis channel MC_CHANNEL.
 //
-// mailcow schickt darüber Container-Operationen, die keinen Rückkanal
-// brauchen. Die Nachrichten benennen den Container über seinen Namen, nicht
-// über die Kennung.
+// mailcow sends container operations that need no answer through it. The messages
+// name the container by name rather than by id.
 package pubsub
 
 import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"bodsch.me/mailcow-dockerapi/internal/actions"
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
+	"bodsch.me/mailcow-dockerapi/internal/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
-// APICallContainerPost ist der einzige Auftragstyp, den main.py kannte.
+// APICallContainerPost is the only job type main.py knew.
 const APICallContainerPost = "container_post"
 
-// Message ist eine Nachricht auf MC_CHANNEL.
+// Message is one message on MC_CHANNEL.
 type Message struct {
 	APICall       string          `json:"api_call"`
 	PostAction    string          `json:"post_action"`
@@ -26,32 +27,49 @@ type Message struct {
 	Request       json.RawMessage `json:"request"`
 }
 
-// Subscriber verarbeitet eingehende Nachrichten.
+// Options configures the subscriber.
+type Options struct {
+	Client  *redis.Client
+	Channel string
+	Env     actions.Env
+	Metrics *metrics.Metrics
+	Log     *slog.Logger
+}
+
+// Subscriber processes incoming messages.
 type Subscriber struct {
 	client  *redis.Client
 	channel string
 	env     actions.Env
-	logger  *slog.Logger
+	metrics *metrics.Metrics
+	log     *slog.Logger
 }
 
-// New baut einen Subscriber.
-func New(client *redis.Client, channel string, env actions.Env, logger *slog.Logger) *Subscriber {
-	if logger == nil {
-		logger = slog.Default()
+// New builds a subscriber.
+func New(opts Options) *Subscriber {
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
 	}
 
-	return &Subscriber{client: client, channel: channel, env: env, logger: logger}
+	return &Subscriber{
+		client:  opts.Client,
+		channel: opts.Channel,
+		env:     opts.Env,
+		metrics: opts.Metrics,
+		log:     log.With("component", "pubsub"),
+	}
 }
 
-// Run empfängt Nachrichten, bis der Kontext endet.
+// Run receives messages until the context ends.
 //
-// Verbindungsabbrüche fängt go-redis selbst ab und stellt die Verbindung
-// wieder her; die Schleife läuft weiter.
+// go-redis catches connection drops itself and re-establishes the subscription;
+// the loop keeps running.
 func (s *Subscriber) Run(ctx context.Context) error {
 	sub := s.client.Subscribe(ctx, s.channel)
-	defer sub.Close()
+	defer func() { _ = sub.Close() }()
 
-	s.logger.Info("Subscribe to redis channel", "channel", s.channel)
+	s.log.Info("Subscribe to redis channel", "channel", s.channel)
 
 	ch := sub.Channel()
 
@@ -68,25 +86,29 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	}
 }
 
-// Handle wertet eine einzelne Nachricht aus.
+// Handle evaluates a single message.
 //
-// Ein Ergebnis gibt es nicht zurückzumelden; Fehler werden protokolliert.
+// There is no result to report back; failures are logged.
 func (s *Subscriber) Handle(ctx context.Context, payload []byte) {
-	s.logger.Info("PubSub Received", "payload", string(payload))
+	s.log.Info("PubSub Received", "payload", string(payload))
 
 	var msg Message
 	if err := json.Unmarshal(payload, &msg); err != nil {
-		s.logger.Error("Unknown PubSub received", "payload", string(payload), "error", err)
+		s.log.Error("Unknown PubSub received", "payload", string(payload), "err", err)
+		s.metrics.ObservePubSub(metrics.PubSubMalformed)
 		return
 	}
 
 	if msg.APICall != APICallContainerPost {
-		s.logger.Error("Unknown PubSub received", "payload", string(payload))
+		s.log.Error("Unknown PubSub received", "payload", string(payload))
+		s.metrics.ObservePubSub(metrics.PubSubUnknown)
 		return
 	}
 
 	if msg.PostAction == "" || msg.ContainerName == "" {
-		s.logger.Error("api call: missing container_name, post_action or request")
+		s.log.Error("api call: missing container_name, post_action or request")
+		s.metrics.ObservePubSub(metrics.PubSubMalformed)
+		s.metrics.ObserveRejected(metrics.ReasonNoTarget, metrics.SourcePubSub)
 		return
 	}
 
@@ -94,44 +116,53 @@ func (s *Subscriber) Handle(ctx context.Context, payload []byte) {
 
 	name, ok := s.resolveName(msg, req)
 	if !ok {
+		s.metrics.ObservePubSub(metrics.PubSubMalformed)
+		s.metrics.ObserveRejected(metrics.ReasonMalformed, metrics.SourcePubSub)
 		return
 	}
 
 	fn, ok := actions.Lookup(name)
 	if !ok {
-		s.logger.Error("api call not found", "method", name, "container_name", msg.ContainerName)
+		s.log.Error("api call not found", "method", name, "container_name", msg.ContainerName)
+		s.metrics.ObservePubSub(metrics.PubSubUnknown)
+		s.metrics.ObserveRejected(metrics.ReasonUnknownCall, metrics.SourcePubSub)
 		return
 	}
 
-	s.logger.Info("api call", "method", name, "container_name", msg.ContainerName)
+	s.log.Info("api call", "method", name, "container_name", msg.ContainerName)
 
+	start := time.Now()
 	res := fn(ctx, s.env, req, dockerclient.Target{ContainerName: msg.ContainerName})
-	s.logger.Debug("api call finished", "method", name, "response", string(res.Body))
+
+	s.metrics.ObserveAction(name, metrics.SourcePubSub, time.Since(start).Seconds())
+	s.metrics.ObservePubSub(metrics.PubSubHandled)
+
+	s.log.Debug("api call finished", "method", name, "response", string(res.Body))
 }
 
-// resolveName bildet den Namen der Action.
+// resolveName builds the action's name.
 //
-// Fehlten bei post_action "exec" die Felder cmd oder task, blieb der Name in
-// main.py:232 unbelegt und der Zugriff schlug mit einem NameError fehl.
+// When post_action was "exec" and cmd or task were missing, the name stayed unbound
+// in main.py:232 and the access failed with a NameError.
 func (s *Subscriber) resolveName(msg Message, req actions.Request) (string, bool) {
 	if msg.PostAction != "exec" {
 		return actions.MethodName(msg.PostAction, "", ""), true
 	}
 
 	if len(msg.Request) == 0 {
-		s.logger.Error("api call: request missing")
+		s.log.Error("api call: request missing")
 		return "", false
 	}
 
 	cmd, ok := req.String("cmd")
 	if !ok {
-		s.logger.Error("api call: cmd missing")
+		s.log.Error("api call: cmd missing")
 		return "", false
 	}
 
 	task, ok := req.String("task")
 	if !ok {
-		s.logger.Error("api call: task missing")
+		s.log.Error("api call: task missing")
 		return "", false
 	}
 

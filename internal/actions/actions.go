@@ -1,11 +1,10 @@
-// Package actions enthält die Container-Operationen, die DockerApi.py als
-// Methoden mit zusammengesetzten Namen bereitstellte.
+// Package actions holds the container operations DockerApi.py exposed as methods
+// with composed names.
 //
-// In Python wurden diese Namen zur Laufzeit gebildet und per getattr
-// aufgelöst (main.py:159). Der Namensraum ist Teil des öffentlichen Vertrags:
-// die PubSub-Nachrichten von mailcow erzeugen exakt dieselben Bezeichner.
-// Deshalb bildet Registry sie unverändert ab – nur eben nachschlagbar,
-// prüfbar und testbar.
+// In Python those names were built at runtime and resolved with getattr
+// (main.py:159). The namespace is part of the public contract: mailcow's PubSub
+// messages produce exactly the same identifiers. Registry therefore maps them
+// unchanged — only now they are lookupable, checkable and testable.
 package actions
 
 import (
@@ -19,13 +18,13 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// Env bündelt, was Actions zur Ausführung brauchen.
+// Env bundles what actions need in order to run.
 type Env struct {
 	Docker dockerclient.API
-	// DBRoot ist das MySQL-root-Passwort für die system-Actions.
+	// DBRoot is the MySQL root password for the system actions.
 	DBRoot string
-	Logger *slog.Logger
-	// Now erzeugt den Zeitstempel für maildir-Verschiebungen; nil bedeutet time.Now.
+	Log    *slog.Logger
+	// Now produces the timestamp for maildir moves; nil means time.Now.
 	Now func() time.Time
 }
 
@@ -37,47 +36,46 @@ func (e Env) now() time.Time {
 }
 
 func (e Env) logger() *slog.Logger {
-	if e.Logger == nil {
+	if e.Log == nil {
 		return slog.New(discardHandler{})
 	}
-	return e.Logger
+	return e.Log
 }
 
-// Func ist die Signatur aller Actions.
+// Func is the signature of every action.
 type Func func(ctx context.Context, env Env, req Request, t dockerclient.Target) Result
 
-// Result ist eine fertig kodierte HTTP-Antwort.
+// Result is a fully encoded HTTP response.
 //
-// Die Python-Fassung kannte drei Ausprägungen: ein JSON-Objekt, reinen Text
-// (exec_run_handler mit 'utf8_text_only') und – nur bei system__df – einen
-// nackten String, den FastAPI seinerseits als JSON-Wert kodierte.
+// The Python implementation had three shapes: a JSON object, plain text
+// (exec_run_handler with 'utf8_text_only') and — only for system__df — a bare
+// string, which FastAPI in turn encoded as a JSON value.
 type Result struct {
 	ContentType string
 	Body        []byte
 }
 
-// Content-Type-Werte, wie FastAPI sie gesetzt hat.
+// Content types, as FastAPI set them.
 const (
 	ContentTypeJSON = "application/json"
 	ContentTypeText = "text/plain"
 )
 
-// Message ist die verbreitetste Antwortform: {"type": ..., "msg": ...}.
+// Message is the most common response shape: {"type": ..., "msg": ...}.
 type Message struct {
 	Type string `json:"type"`
 	Msg  any    `json:"msg"`
 }
 
-// MessageWithText ergänzt Message um das Feld "text", das die mysql-Actions
-// mitliefern. Das Feld wird bewusst auch dann ausgegeben, wenn es leer ist –
-// json.dumps in Python hat es ebenfalls immer geschrieben.
+// MessageWithText adds the "text" field the mysql actions carry. The field is
+// emitted even when it is empty — json.dumps in Python always wrote it too.
 type MessageWithText struct {
 	Type string `json:"type"`
 	Msg  any    `json:"msg"`
 	Text string `json:"text"`
 }
 
-// Antworttypen, wie sie das mailcow-Frontend auswertet.
+// Response types the mailcow frontend evaluates.
 const (
 	TypeSuccess = "success"
 	TypeDanger  = "danger"
@@ -86,15 +84,14 @@ const (
 	TypeError   = "error"
 )
 
-// MsgCommandCompleted ist die Erfolgsmeldung aus exec_run_handler.
+// MsgCommandCompleted is the success message from exec_run_handler.
 const MsgCommandCompleted = "command completed successfully"
 
-// JSON kodiert v so, wie json.dumps(v, indent=4) es getan hätte.
+// JSON encodes v the way json.dumps(v, indent=4) would have.
 //
-// Zwei Feinheiten sind für die Austauschbarkeit entscheidend: Go maskiert
-// standardmäßig <, > und & zu < und so weiter – Python tut das nicht,
-// und die Zeichen kommen in Mailq-Ausgaben regelmäßig vor. Und der Encoder
-// hängt einen Zeilenumbruch an, den json.dumps nicht erzeugt.
+// Two details are decisive for interchangeability: Go escapes <, > and & by
+// default and Python does not — and those characters turn up in mailq output all
+// the time. And the encoder appends a newline that json.dumps does not produce.
 func JSON(v any) Result {
 	var buf bytes.Buffer
 
@@ -103,8 +100,8 @@ func JSON(v any) Result {
 	enc.SetIndent("", "    ")
 
 	if err := enc.Encode(v); err != nil {
-		// Kann nur bei nicht kodierbaren Werten auftreten; die Antwort bleibt
-		// dann im erwarteten Fehlerformat.
+		// This can only happen for values that cannot be encoded; the response
+		// then stays in the expected error format.
 		return JSON(Message{Type: TypeDanger, Msg: err.Error()})
 	}
 
@@ -114,28 +111,29 @@ func JSON(v any) Result {
 	}
 }
 
-// Text liefert eine Antwort mit Content-Type text/plain.
-// Entspricht exec_run_handler('utf8_text_only', ...).
+// Text returns a response with content type text/plain. It corresponds to
+// exec_run_handler('utf8_text_only', ...).
 func Text(s string) Result {
 	return Result{ContentType: ContentTypeText, Body: []byte(s)}
 }
 
-// Success entspricht {'type': 'success', 'msg': 'command completed successfully'}.
+// Success matches {'type': 'success', 'msg': 'command completed successfully'}.
 func Success() Result {
 	return JSON(Message{Type: TypeSuccess, Msg: MsgCommandCompleted})
 }
 
-// Danger baut eine Fehlerantwort im Format des Originals.
+// Danger builds an error response in the original's format.
 func Danger(msg string) Result {
 	return JSON(Message{Type: TypeDanger, Msg: msg})
 }
 
-// Dangerf ist Danger mit Formatierung.
+// Dangerf is Danger with formatting.
 func Dangerf(format string, args ...any) Result {
 	return Danger(fmt.Sprintf(format, args...))
 }
 
-// execHandler entspricht exec_run_handler('generic', ...) aus DockerApi.py:617.
+// execHandler corresponds to exec_run_handler('generic', ...) from
+// DockerApi.py:617.
 func execHandler(res dockerclient.ExecResult) Result {
 	if res.ExitCode == 0 {
 		return Success()
@@ -143,19 +141,19 @@ func execHandler(res dockerclient.ExecResult) Result {
 	return Danger("command failed: " + string(res.Output))
 }
 
-// Fehlermeldungen für Fälle, die in Python zu einer NameError-Ausnahme oder
-// einer Antwort mit dem Rumpf "null" geführt hätten.
+// Messages for cases that would have raised a NameError in Python, or produced a
+// response body of "null".
 const (
 	MsgNoContainerFound = "no container found"
 	MsgNoTarget         = "no or invalid id defined"
 )
 
-// firstContainer liefert den ersten Treffer der Auswahl.
+// firstContainer returns the first match of the selection.
 //
-// Die meisten Actions in DockerApi.py kehren innerhalb der Schleife über die
-// Trefferliste zurück, verarbeiten also ausschließlich den ersten Container.
-// Fand die Schleife nichts, lieferte die Funktion implizit None – der
-// HTTP-Rumpf war dann "null". Hier gibt es stattdessen eine Fehlermeldung.
+// Most actions in DockerApi.py return from inside the loop over the match list and
+// therefore only ever process the first container. When the loop found nothing the
+// function implicitly returned None — the HTTP body was then "null". Here there is
+// an error message instead.
 func firstContainer(ctx context.Context, env Env, t dockerclient.Target, all bool) (dockerclient.Container, *Result) {
 	list, err := env.Docker.List(ctx, t, all)
 	if err != nil {
@@ -170,7 +168,7 @@ func firstContainer(ctx context.Context, env Env, t dockerclient.Target, all boo
 	return list[0], nil
 }
 
-// discardHandler verwirft Log-Ausgaben, wenn kein Logger gesetzt ist.
+// discardHandler drops log output when no logger is set.
 type discardHandler struct{}
 
 func (discardHandler) Enabled(context.Context, slog.Level) bool  { return false }

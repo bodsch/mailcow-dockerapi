@@ -8,24 +8,26 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// rspamdPasswordFile ist die Datei, in der der Controller sein Passwort erwartet.
-const rspamdPasswordFile = "/etc/rspamd/override.d/worker-controller-password.inc"
+// rspamdPasswordFile is where the controller expects its password.
+//
+// G101: a path into the rspamd configuration, not a credential.
+const rspamdPasswordFile = "/etc/rspamd/override.d/worker-controller-password.inc" //nolint:gosec
 
 var (
-	// rspamdHashPattern schneidet den Hash ab dem Präfix $2$ aus einer Zeile.
+	// rspamdHashPattern cuts the hash out of a line, starting at the $2$ prefix.
 	rspamdHashPattern = regexp.MustCompile(`\$2\$.+$`)
-	// rspamdSanitize entfernt alles, was nicht zum Hash gehört.
+	// rspamdSanitize removes everything that is not part of the hash.
 	rspamdSanitize = regexp.MustCompile(`[^0-9a-zA-Z$]+`)
 )
 
-// RspamdWorkerPassword entspricht container_post__exec__rspamd__worker_password.
+// RspamdWorkerPassword implements container_post__exec__rspamd__worker_password.
 //
-// Ablauf wie im Original: rspamadm erzeugt den Hash, dieser wird in die
-// Override-Datei geschrieben, zur Kontrolle zurückgelesen und der Container
-// anschließend neu gestartet.
+// The sequence follows the original: rspamadm generates the hash, it is written to
+// the override file, read back for verification, and the container is restarted
+// afterwards.
 //
-// Beide Kommandos laufen über eine interaktive Shell mit angehängtem stdin –
-// ein gewöhnliches docker exec liefert bei rspamadm pw kein Ergebnis.
+// Both commands run through an interactive shell with stdin attached — a regular
+// docker exec produces no result for rspamadm pw.
 func RspamdWorkerPassword(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	raw, ok := req.String("raw")
 	if !ok {
@@ -44,7 +46,7 @@ func RspamdWorkerPassword(ctx context.Context, env Env, req Request, t dockercli
 		User:    "_rspamd",
 	})
 	if err != nil {
-		env.logger().Error("failed changing Rspamd password", "error", err)
+		env.logger().Error("failed changing Rspamd password", "err", err)
 		return Danger("command did not complete")
 	}
 
@@ -57,9 +59,9 @@ func RspamdWorkerPassword(ctx context.Context, env Env, req Request, t dockercli
 	return Success()
 }
 
-// applyRspamdHash sucht in der Ausgabe nach dem erzeugten Hash, schreibt ihn
-// in die Override-Datei und startet den Container neu. Der Rückgabewert
-// entspricht dem matched-Merker des Originals.
+// applyRspamdHash looks for the generated hash in the output, writes it to the
+// override file and restarts the container. The return value corresponds to the
+// original's matched flag.
 func applyRspamdHash(ctx context.Context, env Env, containerID, output string) bool {
 	matched := false
 
@@ -70,8 +72,8 @@ func applyRspamdHash(ctx context.Context, env Env, containerID, output string) b
 
 		hash := rspamdHashPattern.FindString(strings.TrimSpace(line))
 		if hash == "" {
-			// $2$ stand am Zeilenende ohne folgenden Hash. In Python
-			// scheiterte hier der Zugriff auf group(0).
+			// $2$ sat at the end of the line with no hash after it. In Python the
+			// access to group(0) failed here.
 			continue
 		}
 
@@ -91,8 +93,8 @@ func applyRspamdHash(ctx context.Context, env Env, containerID, output string) b
 			continue
 		}
 
-		// Erst wenn die zurückgelesene Datei den Hash enthält, gilt der
-		// Wechsel als vollzogen.
+		// Only once the file read back contains the hash does the change count as
+		// applied.
 		if !strings.Contains(verify, hash) {
 			continue
 		}

@@ -1,10 +1,10 @@
-// Package tlsgen erzeugt das selbstsignierte Serverzertifikat, das in der
-// Python-Implementierung von docker-entrypoint.sh per openssl angelegt wurde:
+// Package tlsgen creates the self-signed server certificate that
+// docker-entrypoint.sh produced with openssl in the Python implementation:
 //
 //	openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
 //	  -subj /CN=dockerapi/O=mailcow -addext subjectAltName=DNS:dockerapi
 //
-// Damit entfallen Entrypoint-Skript und openssl im Image.
+// That removes both the entrypoint script and openssl from the image.
 package tlsgen
 
 import (
@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// Vorgaben aus docker-entrypoint.sh.
+// The values from docker-entrypoint.sh.
 const (
 	CommonName   = "dockerapi"
 	Organization = "mailcow"
@@ -30,12 +30,12 @@ const (
 	KeyBits      = 4096
 )
 
-// Options steuert die Zertifikatserzeugung. Der Nullwert entspricht dem
-// Verhalten des Entrypoint-Skripts.
+// Options controls certificate generation. The zero value matches the behaviour of
+// the entrypoint script.
 type Options struct {
-	// KeyBits ist die RSA-Schlüssellänge; 0 bedeutet KeyBits (4096).
+	// KeyBits is the RSA key length; 0 means KeyBits (4096).
 	KeyBits int
-	// Now erlaubt es Tests, die Gültigkeitsspanne zu kontrollieren.
+	// Now lets tests control the validity window.
 	Now func() time.Time
 }
 
@@ -53,17 +53,17 @@ func (o Options) now() time.Time {
 	return o.Now()
 }
 
-// Generate erzeugt ein frisches selbstsigniertes Zertifikat samt Schlüssel
-// und gibt beide PEM-kodiert zurück.
+// Generate creates a fresh self-signed certificate together with its key and
+// returns both PEM-encoded.
 func Generate(opts Options) (certPEM, keyPEM []byte, err error) {
 	key, err := rsa.GenerateKey(rand.Reader, opts.bits())
 	if err != nil {
-		return nil, nil, fmt.Errorf("generate rsa key: %w", err)
+		return nil, nil, fmt.Errorf("generating the rsa key: %w", err)
 	}
 
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, nil, fmt.Errorf("generate serial: %w", err)
+		return nil, nil, fmt.Errorf("generating the serial number: %w", err)
 	}
 
 	now := opts.now()
@@ -85,7 +85,7 @@ func Generate(opts Options) (certPEM, keyPEM []byte, err error) {
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create certificate: %w", err)
+		return nil, nil, fmt.Errorf("creating the certificate: %w", err)
 	}
 
 	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
@@ -97,10 +97,10 @@ func Generate(opts Options) (certPEM, keyPEM []byte, err error) {
 	return certPEM, keyPEM, nil
 }
 
-// Ensure lädt das Zertifikatspaar von certFile/keyFile. Fehlt es oder ist es
-// unlesbar, wird ein neues erzeugt und – sofern die Pfade beschreibbar sind –
-// abgelegt. Ein fehlgeschlagener Schreibversuch ist kein Fehler: der Dienst
-// läuft dann mit dem Zertifikat im Speicher weiter.
+// Ensure loads the certificate pair from certFile/keyFile. When it is missing or
+// unreadable, a new one is generated and — where the paths are writable — stored. A
+// failed write is not an error: the service then carries on with the certificate in
+// memory.
 func Ensure(certFile, keyFile string, opts Options) (tls.Certificate, error) {
 	if certFile != "" && keyFile != "" {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -108,7 +108,7 @@ func Ensure(certFile, keyFile string, opts Options) (tls.Certificate, error) {
 			return cert, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			// Beschädigtes Material wird verworfen und neu erzeugt.
+			// Damaged material is discarded and generated anew.
 			_ = err
 		}
 	}
@@ -129,13 +129,15 @@ func writePair(certFile string, certPEM []byte, keyFile string, keyPEM []byte) {
 	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
 		return
 	}
-	_ = os.WriteFile(certFile, certPEM, 0o644)
+	// G306: the certificate is public material — openssl wrote it world-readable
+	// in the entrypoint script too. Only the key above is restricted.
+	_ = os.WriteFile(certFile, certPEM, 0o644) //nolint:gosec
 }
 
 func mustMarshalKey(key *rsa.PrivateKey) []byte {
 	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		// Bei einem gültigen RSA-Schlüssel ist das unerreichbar.
+		// Unreachable for a valid RSA key.
 		panic(err)
 	}
 	return der

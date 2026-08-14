@@ -10,7 +10,7 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient/dockertest"
 )
 
-// Die Lifecycle-Actions wirken auf alle Treffer, nicht nur auf den ersten.
+// The lifecycle actions apply to every match, not only to the first.
 func TestLifecycleAppliesToAllMatches(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -26,7 +26,7 @@ func TestLifecycleAppliesToAllMatches(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &dockertest.Fake{
 				Containers: []dockerclient.Container{
-					{ID: "eins"}, {ID: "zwei"}, {ID: "drei"},
+					{ID: "one"}, {ID: "two"}, {ID: "three"},
 				},
 			}
 
@@ -35,15 +35,15 @@ func TestLifecycleAppliesToAllMatches(t *testing.T) {
 
 			assertBody(t, got, ContentTypeJSON, successBody)
 
-			want := []string{"eins", "zwei", "drei"}
+			want := []string{"one", "two", "three"}
 			if applied := tt.applied(fake); !reflect.DeepEqual(applied, want) {
-				t.Errorf("bearbeitet = %v, want %v", applied, want)
+				t.Errorf("processed = %v, want %v", applied, want)
 			}
 		})
 	}
 }
 
-// Anders als die exec-Actions beziehen sie gestoppte Container ein.
+// Unlike the exec actions, these include stopped containers.
 func TestLifecycleListsAllContainers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -63,7 +63,7 @@ func TestLifecycleListsAllContainers(t *testing.T) {
 			tt.action(context.Background(), newEnv(fake), Request{}, byID())
 
 			if len(fake.ListCalls) != 1 {
-				t.Fatalf("List-Aufrufe = %d, want 1", len(fake.ListCalls))
+				t.Fatalf("List calls = %d, want 1", len(fake.ListCalls))
 			}
 			if !fake.ListCalls[0].All {
 				t.Error("all = false, want true")
@@ -72,8 +72,8 @@ func TestLifecycleListsAllContainers(t *testing.T) {
 	}
 }
 
-// Findet die Auswahl nichts, meldet das Original dennoch Erfolg – mailcow
-// stoppt darüber auch bereits gestoppte Container.
+// When the selection finds nothing the original still reports success — mailcow
+// uses it to stop containers that are already stopped.
 func TestLifecycleSucceedsWithoutMatches(t *testing.T) {
 	fake := &dockertest.Fake{}
 
@@ -90,7 +90,7 @@ func TestLifecyclePropagatesError(t *testing.T) {
 
 	want := `{
     "type": "danger",
-    "msg": "daemon nicht erreichbar"
+    "msg": "the daemon is unreachable"
 }`
 	assertBody(t, got, ContentTypeJSON, want)
 }
@@ -136,8 +136,7 @@ func TestTopWithoutMatch(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Die Messwerte werden unverändert durchgereicht, damit keine Felder verloren
-// gehen.
+// The measurements are passed through unchanged, so no fields are lost.
 func TestStatsPassesRawPayloadThrough(t *testing.T) {
 	fake := newFake()
 	fake.StatsFn = func(string) (json.RawMessage, error) {

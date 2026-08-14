@@ -7,18 +7,18 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// Die exec-Actions listen ohne all=True und sprechen damit ausschließlich
-// laufende Container an – so wie DockerApi.py es tat.
+// The exec actions list without all=True and therefore only address running
+// containers — the way DockerApi.py did.
 const execListAll = false
 
-// qidPattern beschreibt eine Postfix-Queue-ID.
+// qidPattern describes a Postfix queue id.
 //
-// In Python lautete das Muster ^[0-9a-fA-F]+$; dort schließt $ auch einen
-// abschließenden Zeilenumbruch ein. In Go bindet $ ohne (?m) an das Textende,
-// die Prüfung ist also etwas strenger.
+// In Python the pattern was ^[0-9a-fA-F]+$, where $ also covers a trailing
+// newline. In Go $ binds to the end of the text without (?m), so the check is
+// slightly stricter.
 var qidPattern = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 
-// filterQIDs behält nur gültige Queue-IDs.
+// filterQIDs keeps only valid queue ids.
 func filterQIDs(items []string) []string {
 	out := make([]string, 0, len(items))
 	for _, item := range items {
@@ -30,12 +30,11 @@ func filterQIDs(items []string) []string {
 	return out
 }
 
-// requireQIDs liest das Feld items und prüft die enthaltenen Queue-IDs.
+// requireQIDs reads the items field and validates the queue ids in it.
 //
-// DockerApi.py band das Ergebnis von filter() an eine Variable und prüfte
-// diese auf Wahrheitswert. Ein Generator ist immer wahr, weshalb bei
-// ausschließlich ungültigen Einträgen ein postsuper-Aufruf ohne Argumente
-// abgesetzt wurde. Hier führt eine leere Auswahl zu einer Fehlermeldung.
+// DockerApi.py bound the result of filter() to a variable and tested that for
+// truthiness. A generator is always true, so a list of nothing but invalid entries
+// produced a postsuper call with no arguments. Here an empty selection is an error.
 func requireQIDs(req Request) ([]string, *Result) {
 	items, ok := req.Strings("items")
 	if !ok {
@@ -52,11 +51,11 @@ func requireQIDs(req Request) ([]string, *Result) {
 	return qids, nil
 }
 
-// postsuperFlagged setzt postsuper mit einem Schalter je Queue-ID ab.
+// postsuperFlagged issues postsuper with one flag per queue id.
 //
-// Das Original baute daraus eine Zeichenkette und übergab sie an /bin/bash -c.
-// Da die IDs bereits auf Hexadezimalzeichen geprüft sind, ist das gleichwertig
-// zum direkten Argv – dieses kommt jedoch ohne Shell aus.
+// The original built a string from these and handed it to /bin/bash -c. Since the
+// ids are already checked against hexadecimal characters, that is equivalent to the
+// direct argv — which does without a shell.
 func postsuperFlagged(ctx context.Context, env Env, req Request, t dockerclient.Target, flag string) Result {
 	qids, errRes := requireQIDs(req)
 	if errRes != nil {
@@ -81,22 +80,22 @@ func postsuperFlagged(ctx context.Context, env Env, req Request, t dockerclient.
 	return execHandler(res)
 }
 
-// MailqDelete entspricht container_post__exec__mailq__delete.
+// MailqDelete implements container_post__exec__mailq__delete.
 func MailqDelete(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	return postsuperFlagged(ctx, env, req, t, "-d")
 }
 
-// MailqHold entspricht container_post__exec__mailq__hold.
+// MailqHold implements container_post__exec__mailq__hold.
 func MailqHold(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	return postsuperFlagged(ctx, env, req, t, "-h")
 }
 
-// MailqUnhold entspricht container_post__exec__mailq__unhold.
+// MailqUnhold implements container_post__exec__mailq__unhold.
 func MailqUnhold(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	return postsuperFlagged(ctx, env, req, t, "-H")
 }
 
-// MailqCat entspricht container_post__exec__mailq__cat.
+// MailqCat implements container_post__exec__mailq__cat.
 func MailqCat(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	qids, errRes := requireQIDs(req)
 	if errRes != nil {
@@ -118,11 +117,11 @@ func MailqCat(ctx context.Context, env Env, req Request, t dockerclient.Target) 
 	return Text(string(res.Output))
 }
 
-// MailqDeliver entspricht container_post__exec__mailq__deliver.
+// MailqDeliver implements container_post__exec__mailq__deliver.
 //
-// Für jede Queue-ID wird ein eigener postqueue-Aufruf abgesetzt. Die
-// Exit-Codes wertete schon das Original nicht aus (siehe der dortige
-// todo-Kommentar); die Antwort meldet unabhängig davon Erfolg.
+// Every queue id gets its own postqueue call. The original did not evaluate the
+// exit codes either (see the todo comment there); the response reports success
+// regardless.
 func MailqDeliver(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	qids, errRes := requireQIDs(req)
 	if errRes != nil {
@@ -147,22 +146,22 @@ func MailqDeliver(ctx context.Context, env Env, req Request, t dockerclient.Targ
 	return JSON(Message{Type: TypeSuccess, Msg: "Scheduled immediate delivery"})
 }
 
-// MailqList entspricht container_post__exec__mailq__list.
+// MailqList implements container_post__exec__mailq__list.
 func MailqList(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return execText(ctx, env, t, []string{"/usr/sbin/postqueue", "-j"}, "postfix")
 }
 
-// MailqFlush entspricht container_post__exec__mailq__flush.
+// MailqFlush implements container_post__exec__mailq__flush.
 func MailqFlush(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return execGeneric(ctx, env, t, []string{"/usr/sbin/postqueue", "-f"}, "postfix")
 }
 
-// MailqSuperDelete entspricht container_post__exec__mailq__super_delete.
+// MailqSuperDelete implements container_post__exec__mailq__super_delete.
 func MailqSuperDelete(ctx context.Context, env Env, _ Request, t dockerclient.Target) Result {
 	return execGeneric(ctx, env, t, []string{"/usr/sbin/postsuper", "-d", "ALL"}, "")
 }
 
-// execGeneric führt cmd im ersten Treffer aus und wertet den Exit-Code aus.
+// execGeneric runs cmd in the first match and evaluates the exit code.
 func execGeneric(ctx context.Context, env Env, t dockerclient.Target, cmd []string, user string) Result {
 	c, errRes := firstContainer(ctx, env, t, execListAll)
 	if errRes != nil {
@@ -177,7 +176,7 @@ func execGeneric(ctx context.Context, env Env, t dockerclient.Target, cmd []stri
 	return execHandler(res)
 }
 
-// execText führt cmd aus und gibt die Ausgabe unverändert als Text zurück.
+// execText runs cmd and returns its output unchanged, as text.
 func execText(ctx context.Context, env Env, t dockerclient.Target, cmd []string, user string) Result {
 	c, errRes := firstContainer(ctx, env, t, execListAll)
 	if errRes != nil {

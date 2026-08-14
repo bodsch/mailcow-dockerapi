@@ -12,17 +12,17 @@ func TestShellQuote(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"harmlos", "postfix", "'postfix'"},
-		{"leer", "", "''"},
-		{"mit leerzeichen", "zwei woerter", "'zwei woerter'"},
-		{"einfaches anfuehrungszeichen", "o'brien", `'o'\''brien'`},
-		{"nur anfuehrungszeichen", "'", `''\'''`},
-		{"backslash bleibt", `pfad\zu`, `'pfad\zu'`},
-		{"dollar wird neutralisiert", "$(rm -rf /)", "'$(rm -rf /)'"},
-		{"semikolon", "a; rm -rf /", "'a; rm -rf /'"},
-		{"backtick", "`id`", "'`id`'"},
-		{"newline", "a\nb", "'a\nb'"},
-		{"umlaut", "müller@beispiel.de", "'müller@beispiel.de'"},
+		{"harmless", "postfix", "'postfix'"},
+		{"empty", "", "''"},
+		{"with a space", "two words", "'two words'"},
+		{"a single quote", "o'brien", `'o'\''brien'`},
+		{"nothing but a quote", "'", `''\'''`},
+		{"a backslash survives", `path\to`, `'path\to'`},
+		{"a dollar is neutralised", "$(rm -rf /)", "'$(rm -rf /)'"},
+		{"a semicolon", "a; rm -rf /", "'a; rm -rf /'"},
+		{"a backtick", "`id`", "'`id`'"},
+		{"a newline", "a\nb", "'a\nb'"},
+		{"a non-ASCII letter", "müller@example.org", "'müller@example.org'"},
 	}
 
 	for _, tt := range tests {
@@ -34,14 +34,14 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-// roundtrip lässt eine echte Shell das maskierte Wort auswerten und liefert
-// zurück, was dort ankommt.
+// roundtrip has a real shell evaluate the quoted word and returns what arrives on
+// the other side.
 func roundtrip(t *testing.T, s string) (string, bool) {
 	t.Helper()
 
 	sh, err := exec.LookPath("sh")
 	if err != nil {
-		t.Skip("keine sh verfuegbar")
+		t.Skip("no sh available")
 	}
 
 	out, err := exec.Command(sh, "-c", "printf %s "+shellQuote(s)).Output()
@@ -52,7 +52,7 @@ func roundtrip(t *testing.T, s string) (string, bool) {
 	return string(out), true
 }
 
-// Der wirksamste Test für die Maskierung ist die Shell selbst.
+// The most effective test for the quoting is the shell itself.
 func TestShellQuoteRoundtripThroughRealShell(t *testing.T) {
 	inputs := []string{
 		"postfix",
@@ -62,11 +62,11 @@ func TestShellQuoteRoundtripThroughRealShell(t *testing.T) {
 		"`id`",
 		"a b\tc",
 		`\\`,
-		"müller@beispiel.de",
+		"müller@example.org",
 		"*",
 		"~root",
 		"a\nb",
-		"--flag=wert",
+		"--flag=value",
 		"'''",
 	}
 
@@ -74,7 +74,7 @@ func TestShellQuoteRoundtripThroughRealShell(t *testing.T) {
 		t.Run(in, func(t *testing.T) {
 			got, ok := roundtrip(t, in)
 			if !ok {
-				t.Fatalf("Shell-Aufruf fehlgeschlagen fuer %q", in)
+				t.Fatalf("the shell call failed for %q", in)
 			}
 			if got != in {
 				t.Errorf("roundtrip(%q) = %q", in, got)
@@ -89,22 +89,22 @@ func FuzzShellQuote(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, s string) {
-		// NUL-Bytes lassen sich nicht über argv übergeben, und ungültiges
-		// UTF-8 überlebt den Weg durch die Shell nicht verlustfrei.
+		// NUL bytes cannot be passed through argv, and invalid UTF-8 does not
+		// survive the trip through the shell intact.
 		if strings.ContainsRune(s, 0) || !isValidUTF8(s) {
 			t.Skip()
 		}
 
 		quoted := shellQuote(s)
 
-		// Das Ergebnis muss ein einzelnes, vollständig geschlossenes Wort sein.
+		// The result has to be a single, fully closed word.
 		if !strings.HasPrefix(quoted, "'") || !strings.HasSuffix(quoted, "'") {
-			t.Fatalf("shellQuote(%q) = %q ist nicht eingeschlossen", s, quoted)
+			t.Fatalf("shellQuote(%q) = %q is not enclosed", s, quoted)
 		}
 
 		got, ok := roundtrip(t, s)
 		if !ok {
-			t.Fatalf("Shell-Aufruf fehlgeschlagen fuer %q", s)
+			t.Fatalf("the shell call failed for %q", s)
 		}
 		if got != s {
 			t.Fatalf("roundtrip(%q) = %q", s, got)
@@ -122,9 +122,9 @@ func isValidUTF8(s string) bool {
 }
 
 func TestBashCommand(t *testing.T) {
-	got := bashCommand("echo hallo")
+	got := bashCommand("echo hello")
 
-	want := []string{"/bin/bash", "-c", "echo hallo"}
+	want := []string{"/bin/bash", "-c", "echo hello"}
 	if len(got) != len(want) {
 		t.Fatalf("bashCommand = %v, want %v", got, want)
 	}

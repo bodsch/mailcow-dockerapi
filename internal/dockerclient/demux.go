@@ -2,7 +2,7 @@ package dockerclient
 
 import "encoding/binary"
 
-// Stream-Kennungen im Docker-Attach-Protokoll.
+// Stream identifiers in the Docker attach protocol.
 const (
 	streamStdin  byte = 0
 	streamStdout byte = 1
@@ -11,28 +11,29 @@ const (
 	frameHeaderLen = 8
 )
 
-// demux zerlegt einen gemultiplexten Docker-Attach-Strom.
+// demux splits a multiplexed Docker attach stream.
 //
-// Ohne TTY rahmt der Daemon jede Ausgabe mit acht Byte ein: ein Byte
-// Stromkennung, drei Füllbytes und die Nutzlastlänge als uint32 (big endian).
+// Without a TTY the daemon frames every write in eight bytes: one byte of stream
+// identifier, three padding bytes, and the payload length as a big-endian uint32.
 //
-// Anders als stdcopy.StdCopy verträgt die Funktion einen abgeschnittenen
-// Strom: ExecInteractive liest gegen eine Zeitschranke und endet regelmäßig
-// mitten in einem Frame. Unvollständige oder unplausible Daten werden
-// verworfen, das bis dahin Gelesene bleibt erhalten.
+// Unlike stdcopy.StdCopy this tolerates a truncated stream: ExecInteractive reads
+// against a deadline and regularly stops in the middle of a frame. Incomplete or
+// implausible data is discarded, and everything read up to that point is kept.
 func demux(data []byte) (stdout, stderr []byte) {
 	for len(data) >= frameHeaderLen {
 		kind := data[0]
 		if kind != streamStdin && kind != streamStdout && kind != streamStderr {
-			// Kein gültiger Header – der Rest ist nicht interpretierbar.
+			// Not a valid header — the remainder cannot be interpreted.
 			return stdout, stderr
 		}
 
-		size := binary.BigEndian.Uint32(data[4:frameHeaderLen])
+		// The length stays a uint64 so that clamping it to the remaining bytes
+		// needs no narrowing conversion.
+		size := uint64(binary.BigEndian.Uint32(data[4:frameHeaderLen]))
 		rest := data[frameHeaderLen:]
-		if uint64(size) > uint64(len(rest)) {
-			// Angeschnittener Frame: übernehmen, was vorliegt.
-			size = uint32(len(rest))
+		if size > uint64(len(rest)) {
+			// A clipped frame: take what is there.
+			size = uint64(len(rest))
 		}
 
 		payload := rest[:size]
@@ -40,8 +41,8 @@ func demux(data []byte) (stdout, stderr []byte) {
 		case streamStderr:
 			stderr = append(stderr, payload...)
 		default:
-			// stdin-Frames treten serverseitig nicht auf; sie würden wie
-			// stdout behandelt, was dem rohen Mitlesen in Python entspricht.
+			// The server never sends stdin frames; treating them as stdout
+			// matches the raw read-along in the Python implementation.
 			stdout = append(stdout, payload...)
 		}
 
@@ -51,9 +52,9 @@ func demux(data []byte) (stdout, stderr []byte) {
 	return stdout, stderr
 }
 
-// demuxCombined führt stdout und stderr in der Reihenfolge ihres Auftretens
-// zusammen. Das entspricht docker-py exec_run mit demux=False, worauf
-// exec_run_handler in DockerApi.py aufbaut.
+// demuxCombined merges stdout and stderr in the order they occurred. That matches
+// docker-py's exec_run with demux=False, which exec_run_handler in DockerApi.py
+// builds on.
 func demuxCombined(data []byte) []byte {
 	var out []byte
 
@@ -63,10 +64,10 @@ func demuxCombined(data []byte) []byte {
 			return out
 		}
 
-		size := binary.BigEndian.Uint32(data[4:frameHeaderLen])
+		size := uint64(binary.BigEndian.Uint32(data[4:frameHeaderLen]))
 		rest := data[frameHeaderLen:]
-		if uint64(size) > uint64(len(rest)) {
-			size = uint32(len(rest))
+		if size > uint64(len(rest)) {
+			size = uint64(len(rest))
 		}
 
 		out = append(out, rest[:size]...)

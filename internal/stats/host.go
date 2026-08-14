@@ -1,5 +1,5 @@
-// Package stats sammelt Kennzahlen des Wirtssystems und der Container und
-// legt sie im gemeinsamen Zwischenspeicher ab.
+// Package stats collects figures about the host and the containers and puts them
+// in the shared cache.
 package stats
 
 import (
@@ -11,12 +11,12 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
-// TimeLayout entspricht dem Format "%d.%m.%Y %H:%M:%S" aus DockerApi.py:532.
+// TimeLayout matches the format "%d.%m.%Y %H:%M:%S" from DockerApi.py:532.
 const TimeLayout = "02.01.2006 15:04:05"
 
-// HostStats ist die Antwort von GET /host/stats.
+// HostStats is the response of GET /host/stats.
 //
-// Die Feldnamen und ihre Reihenfolge entsprechen dem dict im Original.
+// The field names and their order match the dict in the original.
 type HostStats struct {
 	CPU          CPU     `json:"cpu"`
 	Memory       Memory  `json:"memory"`
@@ -25,34 +25,34 @@ type HostStats struct {
 	Architecture string  `json:"architecture"`
 }
 
-// CPU hält Kernzahl und momentane Auslastung.
+// CPU holds the core count and the current load.
 type CPU struct {
 	Cores int     `json:"cores"`
 	Usage float64 `json:"usage"`
 }
 
-// Memory hält die Arbeitsspeicherwerte.
+// Memory holds the memory figures.
 //
-// Swap ist bewusst ein Feld variabler Länge: psutil.swap_memory() liefert ein
-// benanntes Tupel, das json.dumps als Array kodiert. Ein Objekt an dieser
-// Stelle würde die Auswertung im mailcow-Frontend brechen.
+// Swap is deliberately a variable-length field: psutil.swap_memory() returns a
+// named tuple, which json.dumps encodes as an array. An object here would break
+// the parsing in the mailcow frontend.
 type Memory struct {
 	Total uint64  `json:"total"`
 	Usage float64 `json:"usage"`
 	Swap  []any   `json:"swap"`
 }
 
-// HostProvider liefert die Rohwerte des Wirtssystems.
+// HostProvider supplies the host's raw values.
 //
-// Die Abstraktion erlaubt es, das Antwortformat ohne Zugriff auf echte
-// Systemwerte zu prüfen.
+// The abstraction is what makes the response format checkable without access to
+// real system values.
 type HostProvider interface {
 	Collect(ctx context.Context) (HostStats, error)
 }
 
-// SystemHost liest die Werte über gopsutil aus.
+// SystemHost reads the values through gopsutil.
 type SystemHost struct {
-	// Now erzeugt den Zeitstempel; nil bedeutet time.Now.
+	// Now produces the timestamp; nil means time.Now.
 	Now func() time.Time
 }
 
@@ -63,18 +63,18 @@ func (s SystemHost) now() time.Time {
 	return s.Now()
 }
 
-// Collect stellt die Kennzahlen zusammen.
+// Collect assembles the figures.
 func (s SystemHost) Collect(ctx context.Context) (HostStats, error) {
 	now := s.now()
 
-	// psutil.cpu_count() zählt logische Kerne.
+	// psutil.cpu_count() counts logical cores.
 	cores, err := cpu.CountsWithContext(ctx, true)
 	if err != nil {
 		return HostStats{}, err
 	}
 
-	// psutil.cpu_percent() ohne Intervall misst gegen den vorigen Aufruf und
-	// liefert beim ersten Mal 0.0; gopsutil verhält sich mit interval=0 gleich.
+	// psutil.cpu_percent() without an interval measures against the previous call
+	// and returns 0.0 the first time; gopsutil behaves the same with interval=0.
 	usage, err := cpu.PercentWithContext(ctx, 0, false)
 	if err != nil {
 		return HostStats{}, err
@@ -95,8 +95,8 @@ func (s SystemHost) Collect(ctx context.Context) (HostStats, error) {
 		return HostStats{}, err
 	}
 
-	// platform.machine() meldet die Kernel-Architektur (x86_64, aarch64) –
-	// nicht die Go-Zielarchitektur (amd64, arm64).
+	// platform.machine() reports the kernel architecture (x86_64, aarch64), not
+	// the Go target architecture (amd64, arm64).
 	arch, err := host.KernelArch()
 	if err != nil {
 		return HostStats{}, err
@@ -112,8 +112,8 @@ func (s SystemHost) Collect(ctx context.Context) (HostStats, error) {
 	}, nil
 }
 
-// swapTuple bringt die Auslagerungswerte in die Reihenfolge des benannten
-// Tupels von psutil: total, used, free, percent, sin, sout.
+// swapTuple puts the swap values in the order of psutil's named tuple: total, used,
+// free, percent, sin, sout.
 func swapTuple(s *mem.SwapMemoryStat) []any {
 	if s == nil {
 		return []any{}

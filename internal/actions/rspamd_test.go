@@ -10,8 +10,8 @@ import (
 
 const testHash = "$2$abcdefghijklmnopqrstuvwxyz123456$789"
 
-// rspamdSuccess bildet den vollständigen Ablauf nach: rspamadm liefert den
-// Hash, das Zurücklesen der Datei bestätigt ihn.
+// rspamdSuccess reproduces the complete sequence: rspamadm returns the hash, and
+// reading the file back confirms it.
 func rspamdSuccess() func(string, dockerclient.InteractiveOptions) (string, error) {
 	return func(_ string, opts dockerclient.InteractiveOptions) (string, error) {
 		if strings.Contains(opts.Command, "rspamadm pw") {
@@ -24,19 +24,19 @@ func rspamdSuccess() func(string, dockerclient.InteractiveOptions) (string, erro
 func TestRspamdWorkerPassword(t *testing.T) {
 	fake := newFake()
 	fake.InteractiveFn = rspamdSuccess()
-	req := Request{"raw": "neuesPasswort"}
+	req := Request{"raw": "newPassword"}
 
 	got := RspamdWorkerPassword(context.Background(), newEnv(fake), req, byID())
 
 	assertBody(t, got, ContentTypeJSON, successBody)
 
 	if len(fake.InteractiveCalls) != 2 {
-		t.Fatalf("interaktive Aufrufe = %d, want 2", len(fake.InteractiveCalls))
+		t.Fatalf("interactive calls = %d, want 2", len(fake.InteractiveCalls))
 	}
 
 	gen := fake.InteractiveCalls[0]
-	if gen.Command != "/usr/bin/rspamadm pw -e -p 'neuesPasswort' 2> /dev/null" {
-		t.Errorf("Erzeugung = %q", gen.Command)
+	if gen.Command != "/usr/bin/rspamadm pw -e -p 'newPassword' 2> /dev/null" {
+		t.Errorf("generation = %q", gen.Command)
 	}
 	if gen.User != "_rspamd" {
 		t.Errorf("User = %q, want _rspamd", gen.User)
@@ -46,16 +46,16 @@ func TestRspamdWorkerPassword(t *testing.T) {
 	wantWrite := `/bin/echo 'enable_password = "` + testHash + `";' > ` +
 		rspamdPasswordFile + " && cat " + rspamdPasswordFile
 	if write.Command != wantWrite {
-		t.Errorf("Schreibkommando =\n%q\nwant\n%q", write.Command, wantWrite)
+		t.Errorf("write command =\n%q\nwant\n%q", write.Command, wantWrite)
 	}
 
-	// Erst der Neustart macht das Passwort wirksam.
+	// Only the restart makes the password take effect.
 	if len(fake.Restarted) != 1 || fake.Restarted[0] != testContainerID {
-		t.Errorf("Neustarts = %v, want [%s]", fake.Restarted, testContainerID)
+		t.Errorf("restarts = %v, want [%s]", fake.Restarted, testContainerID)
 	}
 }
 
-// Ein Passwort mit Anführungszeichen darf das Kommando nicht verlassen.
+// A password containing quotes must not escape the command.
 func TestRspamdWorkerPasswordQuotesRaw(t *testing.T) {
 	fake := newFake()
 	fake.InteractiveFn = rspamdSuccess()
@@ -66,21 +66,21 @@ func TestRspamdWorkerPasswordQuotesRaw(t *testing.T) {
 	gen := fake.InteractiveCalls[0]
 	want := `/usr/bin/rspamadm pw -e -p 'pass'\''; touch /tmp/x; '\''' 2> /dev/null`
 	if gen.Command != want {
-		t.Errorf("Erzeugung =\n%q\nwant\n%q", gen.Command, want)
+		t.Errorf("generation =\n%q\nwant\n%q", gen.Command, want)
 	}
 }
 
-// Bestätigt die zurückgelesene Datei den Hash nicht, gilt der Wechsel als
-// gescheitert und der Container bleibt unangetastet.
+// When the file read back does not confirm the hash, the change counts as failed
+// and the container is left alone.
 func TestRspamdWorkerPasswordFailsWhenFileDoesNotConfirm(t *testing.T) {
 	fake := newFake()
 	fake.InteractiveFn = func(_ string, opts dockerclient.InteractiveOptions) (string, error) {
 		if strings.Contains(opts.Command, "rspamadm pw") {
 			return testHash + "\n", nil
 		}
-		return "etwas ganz anderes\n", nil
+		return "something else entirely\n", nil
 	}
-	req := Request{"raw": "neuesPasswort"}
+	req := Request{"raw": "newPassword"}
 
 	got := RspamdWorkerPassword(context.Background(), newEnv(fake), req, byID())
 
@@ -91,16 +91,16 @@ func TestRspamdWorkerPasswordFailsWhenFileDoesNotConfirm(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 
 	if len(fake.Restarted) != 0 {
-		t.Errorf("Container wurde neu gestartet: %v", fake.Restarted)
+		t.Errorf("the container was restarted anyway: %v", fake.Restarted)
 	}
 }
 
 func TestRspamdWorkerPasswordWithoutHashInOutput(t *testing.T) {
 	fake := newFake()
 	fake.InteractiveFn = func(string, dockerclient.InteractiveOptions) (string, error) {
-		return "rspamadm: unbekannter Befehl\n", nil
+		return "rspamadm: unknown command\n", nil
 	}
-	req := Request{"raw": "neuesPasswort"}
+	req := Request{"raw": "newPassword"}
 
 	got := RspamdWorkerPassword(context.Background(), newEnv(fake), req, byID())
 
@@ -111,14 +111,14 @@ func TestRspamdWorkerPasswordWithoutHashInOutput(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Steht $2$ ohne folgenden Hash am Zeilenende, scheiterte Python am Zugriff
-// auf group(0).
+// With $2$ at the end of a line and no hash after it, Python failed on the access
+// to group(0).
 func TestRspamdWorkerPasswordHandlesBarePrefix(t *testing.T) {
 	fake := newFake()
 	fake.InteractiveFn = func(string, dockerclient.InteractiveOptions) (string, error) {
 		return "$2$\n", nil
 	}
-	req := Request{"raw": "neuesPasswort"}
+	req := Request{"raw": "newPassword"}
 
 	got := RspamdWorkerPassword(context.Background(), newEnv(fake), req, byID())
 
@@ -141,14 +141,14 @@ func TestRspamdWorkerPasswordRequiresRaw(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Der Hash wird vor dem Schreiben von allem befreit, was nicht dazugehört.
+// Before being written, the hash is stripped of everything that is not part of it.
 func TestRspamdSanitizesHash(t *testing.T) {
 	fake := newFake()
 	fake.InteractiveFn = func(_ string, opts dockerclient.InteractiveOptions) (string, error) {
 		if strings.Contains(opts.Command, "rspamadm pw") {
-			// Mit Zeilenumbrüchen und Steuerzeichen, wie sie über den
-			// gemultiplexten Strom hereinkommen können.
-			return "Passwort: \r\n" + testHash + " \r\n", nil
+			// With newlines and control characters, as they can arrive over the
+			// multiplexed stream.
+			return "Password: \r\n" + testHash + " \r\n", nil
 		}
 		return `enable_password = "` + testHash + `";`, nil
 	}
@@ -160,6 +160,6 @@ func TestRspamdSanitizesHash(t *testing.T) {
 
 	write := fake.InteractiveCalls[1]
 	if !strings.Contains(write.Command, `"`+testHash+`"`) {
-		t.Errorf("Schreibkommando enthaelt den Hash nicht sauber: %q", write.Command)
+		t.Errorf("the write command does not carry the hash cleanly: %q", write.Command)
 	}
 }

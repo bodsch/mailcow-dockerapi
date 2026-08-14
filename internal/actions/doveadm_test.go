@@ -7,7 +7,7 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// execScript liefert eine Exec-Antwort abhängig vom aufgerufenen Kommando.
+// execScript returns an exec response depending on the command that was called.
 func execScript(responses map[string]string) func(string, dockerclient.ExecOptions) (dockerclient.ExecResult, error) {
 	return func(_ string, opts dockerclient.ExecOptions) (dockerclient.ExecResult, error) {
 		key := ""
@@ -25,19 +25,19 @@ func execScript(responses map[string]string) func(string, dockerclient.ExecOptio
 func TestDoveadmGetACLForOwnMailbox(t *testing.T) {
 	fake := newFake()
 	fake.ExecFn = execScript(map[string]string{
-		"doveadm mailbox list -u user@beispiel.de": "INBOX\nEntwuerfe\n",
-		"doveadm acl get -u user@beispiel.de INBOX": "ID           Global  Rights\n" +
-			"user=kollege@beispiel.de     lookup read write\n",
-		"doveadm acl get -u user@beispiel.de Entwuerfe": "ID  Global  Rights\n",
+		"doveadm mailbox list -u user@example.org": "INBOX\nDrafts\n",
+		"doveadm acl get -u user@example.org INBOX": "ID           Global  Rights\n" +
+			"user=colleague@example.org     lookup read write\n",
+		"doveadm acl get -u user@example.org Drafts": "ID  Global  Rights\n",
 	})
-	req := Request{"id": "user@beispiel.de"}
+	req := Request{"id": "user@example.org"}
 
 	got := DoveadmGetACL(context.Background(), newEnv(fake), req, byID())
 
 	want := `[
     {
-        "user": "user@beispiel.de",
-        "id": "kollege@beispiel.de",
+        "user": "user@example.org",
+        "id": "colleague@example.org",
         "mailbox": "INBOX",
         "rights": [
             "lookup",
@@ -49,38 +49,37 @@ func TestDoveadmGetACLForOwnMailbox(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Ein leeres Ergebnis muss als [] kodiert werden, nicht als null.
+// An empty result has to encode as [], not as null.
 func TestDoveadmGetACLEmptyIsArrayNotNull(t *testing.T) {
 	fake := newFake()
 	fake.ExecFn = execScript(map[string]string{
-		"doveadm mailbox list -u user@beispiel.de": "",
+		"doveadm mailbox list -u user@example.org": "",
 	})
-	req := Request{"id": "user@beispiel.de"}
+	req := Request{"id": "user@example.org"}
 
 	got := DoveadmGetACL(context.Background(), newEnv(fake), req, byID())
 
 	assertBody(t, got, ContentTypeJSON, "[]")
 }
 
-// Bei einem freigegebenen Ordner zählt nur der Eintrag, der auf den
-// angefragten Benutzer verweist.
+// For a shared folder only the entry pointing at the requested user counts.
 func TestDoveadmGetACLForSharedFolder(t *testing.T) {
 	fake := newFake()
 	fake.ExecFn = execScript(map[string]string{
-		"doveadm mailbox list -u user@beispiel.de": "Shared/eigner@beispiel.de/Projekt\n",
-		"doveadm acl get -u eigner@beispiel.de Projekt": "ID  Global  Rights\n" +
-			"user=fremd@beispiel.de   lookup\n" +
-			"user=user@beispiel.de    lookup read insert\n",
+		"doveadm mailbox list -u user@example.org": "Shared/owner@example.org/Project\n",
+		"doveadm acl get -u owner@example.org Project": "ID  Global  Rights\n" +
+			"user=stranger@example.org   lookup\n" +
+			"user=user@example.org    lookup read insert\n",
 	})
-	req := Request{"id": "user@beispiel.de"}
+	req := Request{"id": "user@example.org"}
 
 	got := DoveadmGetACL(context.Background(), newEnv(fake), req, byID())
 
 	want := `[
     {
-        "user": "eigner@beispiel.de",
-        "id": "user@beispiel.de",
-        "mailbox": "Projekt",
+        "user": "owner@example.org",
+        "id": "user@example.org",
+        "mailbox": "Project",
         "rights": [
             "lookup",
             "read",
@@ -91,38 +90,38 @@ func TestDoveadmGetACLForSharedFolder(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Ein zu kurzer Shared-Pfad wird übergangen.
+// A shared path that is too short is skipped.
 func TestDoveadmGetACLSkipsShortSharedPath(t *testing.T) {
 	fake := newFake()
 	fake.ExecFn = execScript(map[string]string{
-		"doveadm mailbox list -u user@beispiel.de": "Shared/eigner\n",
+		"doveadm mailbox list -u user@example.org": "Shared/eigner\n",
 	})
-	req := Request{"id": "user@beispiel.de"}
+	req := Request{"id": "user@example.org"}
 
 	got := DoveadmGetACL(context.Background(), newEnv(fake), req, byID())
 
 	assertBody(t, got, ContentTypeJSON, "[]")
 }
 
-// Zeilen ohne Rechte oder ohne Gleichheitszeichen lösten in Python einen
-// ValueError beziehungsweise IndexError aus.
+// Lines without rights or without an equals sign raised a ValueError or an
+// IndexError in Python.
 func TestDoveadmGetACLSkipsMalformedLines(t *testing.T) {
 	fake := newFake()
 	fake.ExecFn = execScript(map[string]string{
-		"doveadm mailbox list -u user@beispiel.de": "INBOX\n",
-		"doveadm acl get -u user@beispiel.de INBOX": "ID  Global  Rights\n" +
-			"nurEinFeld\n" +
-			"ohneGleichheitszeichen  lookup\n" +
-			"user=gut@beispiel.de  read\n",
+		"doveadm mailbox list -u user@example.org": "INBOX\n",
+		"doveadm acl get -u user@example.org INBOX": "ID  Global  Rights\n" +
+			"onlyOneField\n" +
+			"withoutAnEqualsSign  lookup\n" +
+			"user=good@example.org  read\n",
 	})
-	req := Request{"id": "user@beispiel.de"}
+	req := Request{"id": "user@example.org"}
 
 	got := DoveadmGetACL(context.Background(), newEnv(fake), req, byID())
 
 	want := `[
     {
-        "user": "user@beispiel.de",
-        "id": "gut@beispiel.de",
+        "user": "user@example.org",
+        "id": "good@example.org",
         "mailbox": "INBOX",
         "rights": [
             "read"
@@ -147,17 +146,17 @@ func TestDoveadmGetACLRequiresID(t *testing.T) {
 func TestDoveadmDeleteACL(t *testing.T) {
 	fake := newFake()
 	req := Request{
-		"user":    "eigner@beispiel.de",
-		"mailbox": "Projekt",
-		"id":      "gast@beispiel.de",
+		"user":    "owner@example.org",
+		"mailbox": "Project",
+		"id":      "guest@example.org",
 	}
 
 	got := DoveadmDeleteACL(context.Background(), newEnv(fake), req, byID())
 
 	assertBody(t, got, ContentTypeJSON, successBody)
 	assertExec(t, fake, 0, []string{
-		"doveadm", "acl", "delete", "-u", "eigner@beispiel.de", "Projekt",
-		"user=gast@beispiel.de",
+		"doveadm", "acl", "delete", "-u", "owner@example.org", "Project",
+		"user=guest@example.org",
 	}, "")
 }
 
@@ -167,10 +166,10 @@ func TestDoveadmDeleteACLRejectsEmptyFields(t *testing.T) {
 		req  Request
 		want string
 	}{
-		{"ohne user", Request{"mailbox": "P", "id": "x"}, "user is missing"},
-		{"leerer user", Request{"user": "", "mailbox": "P", "id": "x"}, "user is missing"},
-		{"ohne mailbox", Request{"user": "u", "id": "x"}, "mailbox is missing"},
-		{"ohne id", Request{"user": "u", "mailbox": "P"}, "id is missing"},
+		{"without user", Request{"mailbox": "P", "id": "x"}, "user is missing"},
+		{"empty user", Request{"user": "", "mailbox": "P", "id": "x"}, "user is missing"},
+		{"without mailbox", Request{"user": "u", "id": "x"}, "mailbox is missing"},
+		{"without id", Request{"user": "u", "mailbox": "P"}, "id is missing"},
 	}
 
 	for _, tt := range tests {
@@ -183,7 +182,7 @@ func TestDoveadmDeleteACLRejectsEmptyFields(t *testing.T) {
 			assertBody(t, got, ContentTypeJSON, want)
 
 			if len(fake.ExecCalls) != 0 {
-				t.Errorf("es wurde ein Kommando abgesetzt: %v", fake.ExecCalls)
+				t.Errorf("a command was issued anyway: %v", fake.ExecCalls)
 			}
 		})
 	}
@@ -192,9 +191,9 @@ func TestDoveadmDeleteACLRejectsEmptyFields(t *testing.T) {
 func TestDoveadmSetACL(t *testing.T) {
 	fake := newFake()
 	req := Request{
-		"user":    "eigner@beispiel.de",
-		"mailbox": "Projekt",
-		"id":      "gast@beispiel.de",
+		"user":    "owner@example.org",
+		"mailbox": "Project",
+		"id":      "guest@example.org",
 		"rights":  []any{"lookup", "read", "write-seen"},
 	}
 
@@ -202,19 +201,19 @@ func TestDoveadmSetACL(t *testing.T) {
 
 	assertBody(t, got, ContentTypeJSON, successBody)
 	assertExec(t, fake, 0, []string{
-		"doveadm", "acl", "set", "-u", "eigner@beispiel.de", "Projekt",
-		"user=gast@beispiel.de", "lookup", "read", "write-seen",
+		"doveadm", "acl", "set", "-u", "owner@example.org", "Project",
+		"user=guest@example.org", "lookup", "read", "write-seen",
 	}, "")
 }
 
-// Nur Rechte aus der Positivliste dürfen durchkommen.
+// Only rights from the allow-list may get through.
 func TestDoveadmSetACLFiltersRights(t *testing.T) {
 	fake := newFake()
 	req := Request{
 		"user":    "u",
 		"mailbox": "P",
 		"id":      "g",
-		"rights":  []any{"LOOKUP", "erfunden", "; rm -rf /", "read"},
+		"rights":  []any{"LOOKUP", "invented", "; rm -rf /", "read"},
 	}
 
 	DoveadmSetACL(context.Background(), newEnv(fake), req, byID())
@@ -234,7 +233,7 @@ func TestDoveadmSetACLFiltersRights(t *testing.T) {
 
 func TestDoveadmSetACLWithoutValidRights(t *testing.T) {
 	fake := newFake()
-	req := Request{"user": "u", "mailbox": "P", "id": "g", "rights": []any{"erfunden"}}
+	req := Request{"user": "u", "mailbox": "P", "id": "g", "rights": []any{"invented"}}
 
 	got := DoveadmSetACL(context.Background(), newEnv(fake), req, byID())
 
@@ -245,7 +244,7 @@ func TestDoveadmSetACLWithoutValidRights(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 
 	if len(fake.ExecCalls) != 0 {
-		t.Errorf("es wurde ein Kommando abgesetzt: %v", fake.ExecCalls)
+		t.Errorf("a command was issued anyway: %v", fake.ExecCalls)
 	}
 }
 
@@ -259,7 +258,7 @@ func TestSplitFirstField(t *testing.T) {
 		{"user=a lookup read", "user=a", "lookup read", true},
 		{"  user=a   lookup read", "user=a", "lookup read", true},
 		{"user=a\tlookup", "user=a", "lookup", true},
-		{"nurEinFeld", "", "", false},
+		{"onlyOneField", "", "", false},
 		{"", "", "", false},
 		{"   ", "", "", false},
 	}

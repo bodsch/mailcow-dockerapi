@@ -14,14 +14,14 @@ func TestFilterQIDs(t *testing.T) {
 		in   []string
 		want []string
 	}{
-		{"nur gueltige", []string{"A1B2", "ff00"}, []string{"A1B2", "ff00"}},
-		{"ungueltige entfallen", []string{"A1B2", "; rm -rf /", "zz"}, []string{"A1B2"}},
-		{"leer bleibt leer", []string{}, []string{}},
-		{"leerer eintrag entfaellt", []string{""}, []string{}},
-		{"leerzeichen entfaellt", []string{"AB CD"}, []string{}},
-		// Pythons $ hätte ein angehängtes \n durchgelassen.
-		{"zeilenumbruch entfaellt", []string{"ABCD\n"}, []string{}},
-		{"pfadangabe entfaellt", []string{"../../etc/passwd"}, []string{}},
+		{"only valid ones", []string{"A1B2", "ff00"}, []string{"A1B2", "ff00"}},
+		{"invalid ones are dropped", []string{"A1B2", "; rm -rf /", "zz"}, []string{"A1B2"}},
+		{"empty stays empty", []string{}, []string{}},
+		{"an empty entry is dropped", []string{""}, []string{}},
+		{"a space is dropped", []string{"AB CD"}, []string{}},
+		// Python's $ would have let a trailing \n through.
+		{"a newline is dropped", []string{"ABCD\n"}, []string{}},
+		{"a path is dropped", []string{"../../etc/passwd"}, []string{}},
 	}
 
 	for _, tt := range tests {
@@ -40,7 +40,7 @@ func TestFilterQIDs(t *testing.T) {
 	}
 }
 
-// Die postsuper-Actions setzen je Queue-ID ein eigenes Schalterpaar ab.
+// The postsuper actions issue one flag pair per queue id.
 func TestPostsuperActionsBuildArgv(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -65,11 +65,11 @@ func TestPostsuperActionsBuildArgv(t *testing.T) {
 	}
 }
 
-// In Python war das Ergebnis von filter() ein Generator und damit immer wahr;
-// bei ausschließlich ungültigen Angaben lief postsuper ohne Argumente.
+// In Python the result of filter() was a generator and therefore always true; with
+// nothing but invalid entries postsuper ran with no arguments at all.
 func TestPostsuperRejectsInvalidQIDsInsteadOfRunningBare(t *testing.T) {
 	fake := newFake()
-	req := Request{"items": []any{"; rm -rf /", "nicht-hex"}}
+	req := Request{"items": []any{"; rm -rf /", "not-hex"}}
 
 	got := MailqDelete(context.Background(), newEnv(fake), req, byID())
 
@@ -80,7 +80,7 @@ func TestPostsuperRejectsInvalidQIDsInsteadOfRunningBare(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 
 	if len(fake.ExecCalls) != 0 {
-		t.Errorf("es wurde ein Kommando abgesetzt: %v", fake.ExecCalls)
+		t.Errorf("a command was issued anyway: %v", fake.ExecCalls)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestMailqCat(t *testing.T) {
 	assertExec(t, fake, 0, []string{"/usr/sbin/postcat", "-q", "A1B2", "C3D4"}, "postfix")
 }
 
-// Für jede Queue-ID wird ein eigener postqueue-Aufruf abgesetzt.
+// Every queue id gets its own postqueue call.
 func TestMailqDeliverRunsOncePerQID(t *testing.T) {
 	fake := newFake()
 	req := Request{"items": []any{"A1B2", "C3D4"}}
@@ -123,7 +123,7 @@ func TestMailqDeliverRunsOncePerQID(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 
 	if len(fake.ExecCalls) != 2 {
-		t.Fatalf("Exec-Aufrufe = %d, want 2", len(fake.ExecCalls))
+		t.Fatalf("exec calls = %d, want 2", len(fake.ExecCalls))
 	}
 	assertExec(t, fake, 0, []string{"/usr/sbin/postqueue", "-i", "A1B2"}, "postfix")
 	assertExec(t, fake, 1, []string{"/usr/sbin/postqueue", "-i", "C3D4"}, "postfix")
@@ -159,7 +159,7 @@ func TestMailqSuperDelete(t *testing.T) {
 	assertExec(t, fake, 0, []string{"/usr/sbin/postsuper", "-d", "ALL"}, "")
 }
 
-// Die exec-Actions sprechen ausschließlich laufende Container an.
+// The exec actions address running containers only.
 func TestMailqActionsListOnlyRunningContainers(t *testing.T) {
 	actions := map[string]Func{
 		"delete":       MailqDelete,
@@ -180,7 +180,7 @@ func TestMailqActionsListOnlyRunningContainers(t *testing.T) {
 			action(context.Background(), newEnv(fake), req, byID())
 
 			if len(fake.ListCalls) == 0 {
-				t.Fatal("keine Container-Auswahl erfolgt")
+				t.Fatal("no container selection happened")
 			}
 			if fake.ListCalls[0].All {
 				t.Error("all = true, want false")
@@ -204,7 +204,7 @@ func TestMailqFlushReportsFailure(t *testing.T) {
 	assertBody(t, got, ContentTypeJSON, want)
 }
 
-// Ohne laufenden Container lieferte das Original einen Rumpf mit "null".
+// Without a running container the original produced a body of "null".
 func TestMailqCatWithoutMatch(t *testing.T) {
 	fake := &dockertest.Fake{}
 	req := Request{"items": []any{"A1B2"}}

@@ -5,17 +5,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"bodsch.me/mailcow-dockerapi/internal/actions"
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
+	"bodsch.me/mailcow-dockerapi/internal/metrics"
 )
 
-// maxRequestBody begrenzt den Rumpf einer Anfrage. FastAPI kannte keine
-// Grenze; der Dienst läuft privilegiert und sollte sich nicht über einen
-// übergroßen Rumpf lahmlegen lassen.
+// maxRequestBody bounds a request body. FastAPI had no limit; the service runs
+// privileged and should not be knocked over by an oversized body.
 const maxRequestBody = 4 << 20 // 4 MiB
 
-// Fehlermeldungen aus main.py.
+// Error messages from main.py.
 const (
 	msgInvalidID     = "no or invalid id defined"
 	msgNoContainer   = "no container found"
@@ -24,11 +25,11 @@ const (
 	msgTaskMissing   = "task is missing"
 )
 
-// isAlnum bildet str.isalnum() aus main.py:87 nach.
+// isAlnum reproduces str.isalnum() from main.py:87.
 //
-// Python wertet die Methode Unicode-bewusst aus; hier gilt die engere
-// ASCII-Fassung. Docker-Kennungen sind hexadezimal, die Einschränkung ändert
-// für gültige Eingaben nichts und weist exotische Werte früher ab.
+// Python evaluates that method Unicode-aware; the narrower ASCII reading applies
+// here. Docker ids are hexadecimal, so the restriction changes nothing for valid
+// input and rejects exotic values earlier.
 func isAlnum(s string) bool {
 	if s == "" {
 		return false
@@ -47,18 +48,18 @@ func isAlnum(s string) bool {
 	return true
 }
 
-// handleGetContainer bedient GET /containers/{container_id}/json.
+// handleGetContainer serves GET /containers/{container_id}/json.
 func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	containerID := r.PathValue("container_id")
 	if !isAlnum(containerID) {
+		s.metrics.ObserveRejected(metrics.ReasonNoTarget, metrics.SourceHTTP)
 		s.write(w, actions.Danger(msgInvalidID))
 		return
 	}
 
-	// Wie im Original wird die Liste der laufenden Container durchsucht und
-	// die Kennung vollständig verglichen – ein direktes Inspect würde auch
-	// gestoppte Container finden.
-	list, err := s.Docker.ListAll(r.Context(), false)
+	// As in the original, the list of running containers is searched and the id
+	// compared in full — a direct inspect would also find stopped containers.
+	list, err := s.docker.ListAll(r.Context(), false)
 	if err != nil {
 		s.write(w, actions.Danger(err.Error()))
 		return
@@ -69,7 +70,7 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		raw, err := s.Docker.InspectRaw(r.Context(), c.ID)
+		raw, err := s.docker.InspectRaw(r.Context(), c.ID)
 		if err != nil {
 			s.write(w, actions.Danger(err.Error()))
 			return
@@ -82,14 +83,13 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 	s.write(w, actions.Danger(msgNoContainer))
 }
 
-// handleListContainers bedient GET /containers/json.
+// handleListContainers serves GET /containers/json.
 //
-// Die Antwort ist ein Objekt, das jede Container-Kennung auf ihre
-// Inspect-Ausgabe abbildet.
+// The response is an object mapping every container id onto its inspect output.
 func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	all := parseBool(r.URL.Query().Get("all"))
 
-	list, err := s.Docker.ListAll(r.Context(), all)
+	list, err := s.docker.ListAll(r.Context(), all)
 	if err != nil {
 		s.write(w, actions.Danger(err.Error()))
 		return
@@ -97,7 +97,7 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 
 	containers := make(map[string]json.RawMessage, len(list))
 	for _, c := range list {
-		raw, err := s.Docker.InspectRaw(r.Context(), c.ID)
+		raw, err := s.docker.InspectRaw(r.Context(), c.ID)
 		if err != nil {
 			s.write(w, actions.Danger(err.Error()))
 			return
@@ -108,8 +108,7 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	s.write(w, actions.JSON(containers))
 }
 
-// parseBool wertet den Abfrageparameter so aus, wie FastAPI es für ein
-// bool-Argument tat.
+// parseBool reads the query parameter the way FastAPI did for a bool argument.
 func parseBool(v string) bool {
 	switch strings.ToLower(v) {
 	case "1", "true", "on", "yes", "y", "t":
@@ -119,19 +118,20 @@ func parseBool(v string) bool {
 	}
 }
 
-// handleContainerPost bedient POST /containers/{container_id}/{post_action}
-// und löst die passende Action auf.
+// handleContainerPost serves POST /containers/{container_id}/{post_action} and
+// resolves the matching action.
 func (s *Server) handleContainerPost(w http.ResponseWriter, r *http.Request) {
 	containerID := r.PathValue("container_id")
 	postAction := r.PathValue("post_action")
 
 	if !isAlnum(containerID) || postAction == "" {
+		s.metrics.ObserveRejected(metrics.ReasonNoTarget, metrics.SourceHTTP)
 		s.write(w, actions.Danger(msgInvalidAction))
 		return
 	}
 
-	// Ein fehlender oder ungültiger Rumpf ergibt eine leere Anfrage –
-	// main.py:133 fing den Fehler ebenso ab.
+	// A missing or invalid body yields an empty request — main.py:133 swallowed
+	// the error in the same way.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody))
 	if err != nil {
 		body = nil
@@ -140,25 +140,30 @@ func (s *Server) handleContainerPost(w http.ResponseWriter, r *http.Request) {
 
 	name, errRes := s.resolveName(postAction, req)
 	if errRes != nil {
+		s.metrics.ObserveRejected(metrics.ReasonMalformed, metrics.SourceHTTP)
 		s.write(w, *errRes)
 		return
 	}
 
 	fn, ok := actions.Lookup(name)
 	if !ok {
-		s.Logger.Error("unknown api call", "method", name, "container_id", containerID)
+		s.log.Error("unknown api call", "method", name, "container_id", containerID)
+		s.metrics.ObserveRejected(metrics.ReasonUnknownCall, metrics.SourceHTTP)
 		s.write(w, actions.Danger(actions.MsgUnknownAPICall))
 		return
 	}
 
-	s.Logger.Info("api call", "method", name, "container_id", containerID)
+	s.log.Info("api call", "method", name, "container_id", containerID)
 
-	res := fn(r.Context(), s.Env, req, dockerclient.Target{ContainerID: containerID})
+	start := time.Now()
+	res := fn(r.Context(), s.env, req, dockerclient.Target{ContainerID: containerID})
+	s.metrics.ObserveAction(name, metrics.SourceHTTP, time.Since(start).Seconds())
+
 	s.write(w, res)
 }
 
-// resolveName bildet den Namen der Action aus der Aktion und – bei exec –
-// aus den Feldern cmd und task des Rumpfes.
+// resolveName builds the action's name from the post action and — for exec — from
+// the body's cmd and task fields.
 func (s *Server) resolveName(postAction string, req actions.Request) (string, *actions.Result) {
 	if postAction != "exec" {
 		return actions.MethodName(postAction, "", ""), nil

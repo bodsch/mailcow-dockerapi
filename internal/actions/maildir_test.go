@@ -6,23 +6,23 @@ import (
 	"testing"
 )
 
-// Pythons \W ist Unicode-bewusst; Gos \W umfasst nur ASCII. Ohne die
-// ausgeschriebene Zeichenklasse entstünden für Postfächer mit Umlauten
-// abweichende Verzeichnisnamen.
+// Python's \W is Unicode-aware; Go's \W covers ASCII only. Without the character
+// class spelled out, mailboxes with non-ASCII letters would end up in differently
+// named directories.
 func TestSanitizeNameKeepsUnicodeLetters(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want string
 	}{
-		{"schraegstrich entfaellt", "beispiel.de/user", "beispieldeuser"},
-		{"punkt entfaellt", "a.b.c", "abc"},
-		{"unterstrich bleibt", "a_b", "a_b"},
-		{"ziffern bleiben", "user123", "user123"},
-		{"umlaut bleibt", "beispiel.de/müller", "beispieldemüller"},
-		{"kyrillisch bleibt", "пример", "пример"},
-		{"sonderzeichen entfallen", "a'; rm -rf /", "armrf"},
-		{"leer", "", ""},
+		{"a slash is dropped", "example.org/user", "exampleorguser"},
+		{"a dot is dropped", "a.b.c", "abc"},
+		{"an underscore survives", "a_b", "a_b"},
+		{"digits survive", "user123", "user123"},
+		{"a non-ASCII letter survives", "example.org/müller", "exampleorgmüller"},
+		{"Cyrillic survives", "пример", "пример"},
+		{"punctuation is dropped", "a'; rm -rf /", "armrf"},
+		{"empty", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -40,9 +40,9 @@ func TestIndexName(t *testing.T) {
 		want   string
 		wantOK bool
 	}{
-		{"beispiel.de/user", "user@beispiel.de", true},
-		{"beispiel.de/user/Unterordner", "user@beispiel.de", true},
-		{"ohneschraegstrich", "", false},
+		{"example.org/user", "user@example.org", true},
+		{"example.org/user/Subfolder", "user@example.org", true},
+		{"noslash", "", false},
 		{"", "", false},
 	}
 
@@ -61,47 +61,48 @@ func TestIndexName(t *testing.T) {
 
 func TestMaildirCleanupMovesMailboxAndIndex(t *testing.T) {
 	fake := newFake()
-	req := Request{"maildir": "beispiel.de/user"}
+	req := Request{"maildir": "example.org/user"}
 
 	got := MaildirCleanup(context.Background(), newEnv(fake), req, byID())
 
 	assertBody(t, got, ContentTypeJSON, successBody)
 
-	garbage := "/var/vmail/_garbage/1700000000_beispieldeuser"
-	wantScript := "if [[ -d '/var/vmail/beispiel.de/user' ]]; then" +
-		" /bin/mv '/var/vmail/beispiel.de/user' '" + garbage + "'; fi" +
-		" && if [[ -d '/var/vmail_index/user@beispiel.de' ]]; then" +
-		" /bin/mv '/var/vmail_index/user@beispiel.de' '" + garbage + "_index'; fi"
+	garbage := "/var/vmail/_garbage/1700000000_exampleorguser"
+	wantScript := "if [[ -d '/var/vmail/example.org/user' ]]; then" +
+		" /bin/mv '/var/vmail/example.org/user' '" + garbage + "'; fi" +
+		" && if [[ -d '/var/vmail_index/user@example.org' ]]; then" +
+		" /bin/mv '/var/vmail_index/user@example.org' '" + garbage + "_index'; fi"
 
 	assertExec(t, fake, 0, bashCommand(wantScript), "vmail")
 }
 
-// Ohne Schrägstrich gibt es kein Indexverzeichnis.
+// Without a slash there is no index directory.
 func TestMaildirCleanupWithoutIndex(t *testing.T) {
 	fake := newFake()
-	req := Request{"maildir": "einzelwert"}
+	req := Request{"maildir": "singlevalue"}
 
 	MaildirCleanup(context.Background(), newEnv(fake), req, byID())
 
-	wantScript := "if [[ -d '/var/vmail/einzelwert' ]]; then" +
-		" /bin/mv '/var/vmail/einzelwert' '/var/vmail/_garbage/1700000000_einzelwert'; fi"
+	wantScript := "if [[ -d '/var/vmail/singlevalue' ]]; then" +
+		" /bin/mv '/var/vmail/singlevalue' '/var/vmail/_garbage/1700000000_singlevalue'; fi"
 
 	assertExec(t, fake, 0, bashCommand(wantScript), "vmail")
 }
 
 func TestMaildirCleanupQuotesInput(t *testing.T) {
 	fake := newFake()
-	req := Request{"maildir": "beispiel.de/o'brien"}
+	req := Request{"maildir": "example.org/o'brien"}
 
 	MaildirCleanup(context.Background(), newEnv(fake), req, byID())
 
 	call, _ := fake.LastExec()
-	// Der Pfad ist maskiert, der Zielname zusätzlich von Sonderzeichen befreit.
+	// The path is quoted, and the destination name additionally stripped of
+	// punctuation.
 	if !containsAll(call.Cmd[2],
-		`'/var/vmail/beispiel.de/o'\''brien'`,
-		`/var/vmail/_garbage/1700000000_beispieldeobrien`,
+		`'/var/vmail/example.org/o'\''brien'`,
+		`/var/vmail/_garbage/1700000000_exampleorgobrien`,
 	) {
-		t.Errorf("Skript =\n%s", call.Cmd[2])
+		t.Errorf("script =\n%s", call.Cmd[2])
 	}
 }
 
@@ -120,30 +121,30 @@ func TestMaildirCleanupRequiresMaildir(t *testing.T) {
 func TestMaildirMove(t *testing.T) {
 	fake := newFake()
 	req := Request{
-		"old_maildir": "beispiel.de/alt",
-		"new_maildir": "beispiel.de/neu",
+		"old_maildir": "example.org/old",
+		"new_maildir": "example.org/new",
 	}
 
 	got := MaildirMove(context.Background(), newEnv(fake), req, byID())
 
 	assertBody(t, got, ContentTypeJSON, successBody)
 
-	// Der Zusatz _index am Ziel stammt aus DockerApi.py:363.
-	wantScript := "if [[ -d '/var/vmail/beispiel.de/alt' ]]; then" +
-		" /bin/mv '/var/vmail/beispiel.de/alt' '/var/vmail/beispiel.de/neu'; fi" +
-		" && if [[ -d '/var/vmail_index/alt@beispiel.de' ]]; then" +
-		" /bin/mv '/var/vmail_index/alt@beispiel.de' '/var/vmail_index/neu@beispiel.de_index'; fi"
+	// The _index suffix on the destination comes from DockerApi.py:363.
+	wantScript := "if [[ -d '/var/vmail/example.org/old' ]]; then" +
+		" /bin/mv '/var/vmail/example.org/old' '/var/vmail/example.org/new'; fi" +
+		" && if [[ -d '/var/vmail_index/old@example.org' ]]; then" +
+		" /bin/mv '/var/vmail_index/old@example.org' '/var/vmail_index/new@example.org_index'; fi"
 
 	assertExec(t, fake, 0, bashCommand(wantScript), "vmail")
 }
 
 func TestMaildirMoveWithoutIndex(t *testing.T) {
 	fake := newFake()
-	req := Request{"old_maildir": "alt", "new_maildir": "neu"}
+	req := Request{"old_maildir": "old", "new_maildir": "new"}
 
 	MaildirMove(context.Background(), newEnv(fake), req, byID())
 
-	wantScript := "if [[ -d '/var/vmail/alt' ]]; then /bin/mv '/var/vmail/alt' '/var/vmail/neu'; fi"
+	wantScript := "if [[ -d '/var/vmail/old' ]]; then /bin/mv '/var/vmail/old' '/var/vmail/new'; fi"
 
 	assertExec(t, fake, 0, bashCommand(wantScript), "vmail")
 }
@@ -154,9 +155,9 @@ func TestMaildirMoveRequiresBothPaths(t *testing.T) {
 		req  Request
 		want string
 	}{
-		{"ohne alt", Request{"new_maildir": "neu"}, "old_maildir is missing"},
-		{"ohne neu", Request{"old_maildir": "alt"}, "new_maildir is missing"},
-		{"ohne beide", Request{}, "old_maildir is missing"},
+		{"without the old path", Request{"new_maildir": "new"}, "old_maildir is missing"},
+		{"without the new path", Request{"old_maildir": "old"}, "new_maildir is missing"},
+		{"without either", Request{}, "old_maildir is missing"},
 	}
 
 	for _, tt := range tests {

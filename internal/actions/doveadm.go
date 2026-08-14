@@ -7,10 +7,10 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// ACL ist ein Eintrag der Antwort von doveadm__get_acl.
+// ACL is one entry in the response of doveadm__get_acl.
 //
-// Die Feldreihenfolge entspricht dem dict im Original, weil json.dumps in
-// Python die Einfügereihenfolge beibehält.
+// The field order matches the dict in the original, because json.dumps in Python
+// preserves insertion order.
 type ACL struct {
 	User    string   `json:"user"`
 	ID      string   `json:"id"`
@@ -18,7 +18,7 @@ type ACL struct {
 	Rights  []string `json:"rights"`
 }
 
-// availableRights ist die Positivliste aus DockerApi.py:494.
+// availableRights is the allow-list from DockerApi.py:494.
 var availableRights = map[string]bool{
 	"admin":         true,
 	"create":        true,
@@ -33,12 +33,11 @@ var availableRights = map[string]bool{
 	"write-seen":    true,
 }
 
-// DoveadmGetACL entspricht container_post__exec__doveadm__get_acl.
+// DoveadmGetACL implements container_post__exec__doveadm__get_acl.
 //
-// Zuerst werden die Postfächer des Benutzers aufgelistet, danach für jedes
-// die Rechte abgefragt. Freigegebene Ordner ("Shared/...") gehören einem
-// anderen Benutzer; dort zählt nur der Eintrag, der auf den angefragten
-// Benutzer verweist.
+// It first lists the user's mailboxes, then queries the rights for each of them.
+// Shared folders ("Shared/...") belong to another user; there only the entry
+// pointing at the requested user counts.
 func DoveadmGetACL(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	id, ok := req.String("id")
 	if !ok {
@@ -57,7 +56,7 @@ func DoveadmGetACL(ctx context.Context, env Env, req Request, t dockerclient.Tar
 		return Danger(err.Error())
 	}
 
-	// Ein leeres Ergebnis muss als [] und nicht als null kodiert werden.
+	// An empty result has to encode as [] rather than null.
 	formatted := []ACL{}
 	seen := map[string]bool{}
 
@@ -75,7 +74,7 @@ func DoveadmGetACL(ctx context.Context, env Env, req Request, t dockerclient.Tar
 	return JSON(formatted)
 }
 
-// appendOwnACLs verarbeitet ein Postfach, das dem angefragten Benutzer gehört.
+// appendOwnACLs handles a mailbox owned by the requested user.
 func appendOwnACLs(
 	ctx context.Context,
 	env Env,
@@ -100,8 +99,7 @@ func appendOwnACLs(
 	return acc
 }
 
-// appendSharedACLs verarbeitet einen freigegebenen Ordner der Form
-// "Shared/eigentuemer/pfad".
+// appendSharedACLs handles a shared folder of the form "Shared/owner/path".
 func appendSharedACLs(
 	ctx context.Context,
 	env Env,
@@ -122,7 +120,7 @@ func appendSharedACLs(
 	}
 
 	for _, entry := range aclEntries(ctx, env, containerID, owner, mailbox) {
-		// Nur der Eintrag des angefragten Benutzers ist von Belang.
+		// Only the requested user's entry is of interest.
 		if entry.userID != id || seen[mailbox] {
 			continue
 		}
@@ -139,17 +137,17 @@ func appendSharedACLs(
 	return acc
 }
 
-// aclEntry ist eine geparste Zeile aus `doveadm acl get`.
+// aclEntry is one parsed line of `doveadm acl get`.
 type aclEntry struct {
 	userID string
 	rights []string
 }
 
-// aclEntries führt `doveadm acl get` aus und zerlegt die Ausgabe.
+// aclEntries runs `doveadm acl get` and parses the output.
 //
-// Die erste Zeile ist eine Spaltenüberschrift und wird übersprungen. Zeilen,
-// die sich nicht in Kennung und Rechte zerlegen lassen, werden übergangen;
-// in Python führten sie zu einem ValueError beziehungsweise IndexError.
+// The first line is a column header and is skipped. Lines that do not split into
+// an identifier and rights are ignored; in Python they raised a ValueError or an
+// IndexError.
 func aclEntries(ctx context.Context, env Env, containerID, user, mailbox string) []aclEntry {
 	res, err := env.Docker.Exec(ctx, containerID, dockerclient.ExecOptions{
 		Cmd: []string{"doveadm", "acl", "get", "-u", user, mailbox},
@@ -181,9 +179,9 @@ func aclEntries(ctx context.Context, env Env, containerID, user, mailbox string)
 	return entries
 }
 
-// splitFirstField trennt das erste Feld vom Rest – wie str.split(maxsplit=1)
-// in Python, das führende Leerzeichen überspringt und Leerraumfolgen als
-// einen Trenner behandelt.
+// splitFirstField separates the first field from the rest — like Python's
+// str.split(maxsplit=1), which skips leading whitespace and treats a run of
+// whitespace as one separator.
 func splitFirstField(s string) (first, rest string, ok bool) {
 	const space = " \t\n\r\v\f"
 
@@ -196,7 +194,7 @@ func splitFirstField(s string) (first, rest string, ok bool) {
 	return s[:idx], strings.TrimLeft(s[idx:], space), true
 }
 
-// DoveadmDeleteACL entspricht container_post__exec__doveadm__delete_acl.
+// DoveadmDeleteACL implements container_post__exec__doveadm__delete_acl.
 func DoveadmDeleteACL(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	user, ok := req.NonEmptyString("user")
 	if !ok {
@@ -217,10 +215,10 @@ func DoveadmDeleteACL(ctx context.Context, env Env, req Request, t dockerclient.
 		[]string{"doveadm", "acl", "delete", "-u", user, mailbox, "user=" + id}, "")
 }
 
-// DoveadmSetACL entspricht container_post__exec__doveadm__set_acl.
+// DoveadmSetACL implements container_post__exec__doveadm__set_acl.
 //
-// Nur Rechte aus der Positivliste werden übernommen; unbekannte Angaben
-// entfallen stillschweigend, wie im Original.
+// Only rights from the allow-list are passed on; unknown ones are dropped
+// silently, as in the original.
 func DoveadmSetACL(ctx context.Context, env Env, req Request, t dockerclient.Target) Result {
 	user, ok := req.NonEmptyString("user")
 	if !ok {

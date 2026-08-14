@@ -1,8 +1,10 @@
-// Package dockertest stellt eine Attrappe der Docker-API für Tests bereit.
+// Package dockertest provides a fake Docker API for tests.
 //
-// Sie zeichnet jeden Aufruf mitsamt Argumenten auf. Damit lässt sich prüfen,
-// welches Argv eine Action tatsächlich absetzt – der wirksamste Schutz gegen
-// Fehler beim Maskieren von Benutzereingaben.
+// It records every call together with its arguments, which is how a test can
+// assert what argv an action actually issues — the most effective guard against
+// mistakes in quoting user input.
+//
+// It lives in its own package so the production binary never links it.
 package dockertest
 
 import (
@@ -13,14 +15,14 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
 )
 
-// ExecCall hält einen aufgezeichneten Exec-Aufruf.
+// ExecCall holds one recorded exec call.
 type ExecCall struct {
 	ContainerID string
 	Cmd         []string
 	User        string
 }
 
-// InteractiveCall hält einen aufgezeichneten interaktiven Aufruf.
+// InteractiveCall holds one recorded interactive call.
 type InteractiveCall struct {
 	ContainerID string
 	Shell       string
@@ -28,45 +30,44 @@ type InteractiveCall struct {
 	User        string
 }
 
-// ListCall hält eine aufgezeichnete Container-Auswahl.
+// ListCall holds one recorded container selection.
 type ListCall struct {
 	Target dockerclient.Target
 	All    bool
 }
 
-// Fake implementiert dockerclient.API.
+// Fake implements dockerclient.API.
 //
-// Ohne weitere Einstellung liefert List die in Containers hinterlegten
-// Einträge und Exec einen Erfolg mit leerer Ausgabe.
+// Without further setup List returns whatever is in Containers and Exec reports
+// success with empty output.
 type Fake struct {
 	mu sync.Mutex
 
-	// Containers ist die Standardantwort von List und ListAll.
+	// Containers is the default answer of List and ListAll.
 	Containers []dockerclient.Container
-	// ListErr lässt List und ListAll scheitern.
+	// ListErr makes List and ListAll fail.
 	ListErr error
 
-	// ExecFn beantwortet Exec-Aufrufe. Ist sie nil, wird ExecResults der
-	// Reihe nach abgearbeitet; ist auch die Liste erschöpft, gilt Exit-Code 0
-	// mit leerer Ausgabe.
+	// ExecFn answers exec calls. When it is nil, ExecResults is consumed in
+	// order; once that list is exhausted, exit code 0 with empty output applies.
 	ExecFn func(id string, opts dockerclient.ExecOptions) (dockerclient.ExecResult, error)
-	// ExecResults wird der Reihe nach zurückgegeben.
+	// ExecResults is returned one entry at a time.
 	ExecResults []dockerclient.ExecResult
 
-	// InteractiveFn beantwortet ExecInteractive-Aufrufe.
+	// InteractiveFn answers ExecInteractive calls.
 	InteractiveFn func(id string, opts dockerclient.InteractiveOptions) (string, error)
 
-	// InspectFn beantwortet InspectRaw-Aufrufe.
+	// InspectFn answers InspectRaw calls.
 	InspectFn func(id string) (json.RawMessage, error)
-	// TopFn beantwortet Top-Aufrufe.
+	// TopFn answers Top calls.
 	TopFn func(id string) (dockerclient.TopResult, error)
-	// StatsFn beantwortet Stats-Aufrufe.
+	// StatsFn answers Stats calls.
 	StatsFn func(id string) (json.RawMessage, error)
 
-	// StartErr, StopErr und RestartErr lassen die jeweilige Operation scheitern.
+	// StartErr, StopErr and RestartErr make the respective operation fail.
 	StartErr, StopErr, RestartErr error
 
-	// Aufzeichnungen.
+	// Recordings.
 	ListCalls        []ListCall
 	ListAllCalls     []bool
 	ExecCalls        []ExecCall
@@ -84,8 +85,8 @@ type Fake struct {
 
 var _ dockerclient.API = (*Fake)(nil)
 
-// WithContainers erzeugt eine Attrappe, die genau einen Container mit der
-// angegebenen ID und dem angegebenen Namen liefert.
+// WithContainers builds a fake that returns exactly one container with the given
+// id and name.
 func WithContainers(id, name string) *Fake {
 	return &Fake{
 		Containers: []dockerclient.Container{
@@ -231,7 +232,7 @@ func (f *Fake) Close() error {
 	return nil
 }
 
-// LastExec liefert den zuletzt aufgezeichneten Exec-Aufruf.
+// LastExec returns the most recently recorded exec call.
 func (f *Fake) LastExec() (ExecCall, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -242,22 +243,22 @@ func (f *Fake) LastExec() (ExecCall, bool) {
 	return f.ExecCalls[len(f.ExecCalls)-1], true
 }
 
-// Die folgenden Methoden geben Kopien der Aufzeichnungen heraus.
+// The methods below hand out copies of the recordings.
 //
-// Wird die Attrappe aus mehreren Goroutinen bedient – etwa beim PubSub-Empfang
-// oder bei nebenläufigen Anfragen – ist der direkte Feldzugriff ein Wettlauf.
-// Für solche Tests sind diese Methoden gedacht.
+// When the fake is driven from several goroutines — during PubSub delivery, say,
+// or with concurrent requests — reading the fields directly is a race. These
+// methods exist for those tests.
 
-// StoppedIDs liefert die gestoppten Container.
+// StoppedIDs returns the stopped containers.
 func (f *Fake) StoppedIDs() []string { return f.snapshot(func() []string { return f.Stopped }) }
 
-// StartedIDs liefert die gestarteten Container.
+// StartedIDs returns the started containers.
 func (f *Fake) StartedIDs() []string { return f.snapshot(func() []string { return f.Started }) }
 
-// RestartedIDs liefert die neu gestarteten Container.
+// RestartedIDs returns the restarted containers.
 func (f *Fake) RestartedIDs() []string { return f.snapshot(func() []string { return f.Restarted }) }
 
-// ExecCallCount liefert die Anzahl der Exec-Aufrufe.
+// ExecCallCount returns the number of exec calls.
 func (f *Fake) ExecCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

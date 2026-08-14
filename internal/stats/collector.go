@@ -13,7 +13,7 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/store"
 )
 
-// Schlüssel und Verfallszeiten aus DockerApi.py.
+// Keys and expiries from DockerApi.py.
 const (
 	HostStatsKey        = "host_stats"
 	ContainerStatsSufix = "_stats"
@@ -21,89 +21,87 @@ const (
 	HostStatsTTL      = 10 * time.Second
 	ContainerStatsTTL = 60 * time.Second
 
-	// MaxSamples ist die Länge des Ringpuffers je Container.
+	// MaxSamples is the length of the per-container ring buffer.
 	MaxSamples = 3
 
-	// DefaultRefreshInterval entspricht dem wait=5 aus DockerApi.py:518.
+	// DefaultRefreshInterval matches wait=5 from DockerApi.py:518.
 	DefaultRefreshInterval = 5 * time.Second
 )
 
-// ErrTimeout meldet, dass innerhalb der Frist keine Messwerte vorlagen.
+// ErrTimeout reports that no measurement arrived within the deadline.
 //
-// In main.py:75 und main.py:187 wartete die Anfrage an dieser Stelle in einer
-// Endlosschleife, die ohne Redis nie endete.
+// In main.py:75 and main.py:187 the request waited here in an endless loop that
+// never ended without Redis.
 var ErrTimeout = errors.New("timeout waiting for stats")
 
-// Collector sammelt Messwerte und legt sie im Zwischenspeicher ab.
+// Collector gathers measurements and puts them in the cache.
 //
-// Mehrere gleichzeitige Anfragen für dieselben Werte lösen nur einen
-// Sammelvorgang aus; die übrigen warten auf dessen Ergebnis. Das Original
-// nutzte dafür einen Merker und eine Liste ohne Sperre.
+// Several concurrent requests for the same values trigger only one collection; the
+// others wait for its result. The original used a flag and a list, without a lock.
 type Collector struct {
 	docker  dockerclient.API
 	store   store.Store
 	host    HostProvider
-	logger  *slog.Logger
+	log     *slog.Logger
 	timeout time.Duration
 
-	// refreshInterval ist die Pause zwischen den beiden Messungen eines
-	// Sammelvorgangs.
+	// refreshInterval is the pause between the two measurements of one
+	// collection.
 	refreshInterval time.Duration
 
 	mu       sync.Mutex
 	inflight map[string]*refresh
 }
 
-// refresh hält den Zustand eines laufenden Sammelvorgangs.
+// refresh holds the state of a running collection.
 type refresh struct {
-	// done wird geschlossen, sobald die erste Messung abgeschlossen ist.
+	// done is closed as soon as the first measurement is complete.
 	done chan struct{}
-	// err hält den Fehler dieser Messung, damit die wartende Anfrage die
-	// Ursache melden kann statt nur eine abgelaufene Frist.
+	// err holds that measurement's error, so the waiting request can report the
+	// cause rather than only an expired deadline.
 	err error
 }
 
-// Config beschreibt einen Collector.
-type Config struct {
+// Options describes a Collector.
+type Options struct {
 	Docker  dockerclient.API
 	Store   store.Store
 	Host    HostProvider
-	Logger  *slog.Logger
+	Log     *slog.Logger
 	Timeout time.Duration
-	// RefreshInterval ist optional; 0 bedeutet DefaultRefreshInterval.
+	// RefreshInterval is optional; 0 means DefaultRefreshInterval.
 	RefreshInterval time.Duration
 }
 
-// New baut einen Collector.
-func New(cfg Config) *Collector {
-	if cfg.Host == nil {
-		cfg.Host = SystemHost{}
+// New builds a Collector.
+func New(opts Options) *Collector {
+	if opts.Host == nil {
+		opts.Host = SystemHost{}
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+	if opts.Log == nil {
+		opts.Log = slog.Default()
 	}
-	if cfg.RefreshInterval == 0 {
-		cfg.RefreshInterval = DefaultRefreshInterval
+	if opts.RefreshInterval == 0 {
+		opts.RefreshInterval = DefaultRefreshInterval
 	}
 
 	return &Collector{
-		docker:          cfg.Docker,
-		store:           cfg.Store,
-		host:            cfg.Host,
-		logger:          cfg.Logger,
-		timeout:         cfg.Timeout,
-		refreshInterval: cfg.RefreshInterval,
+		docker:          opts.Docker,
+		store:           opts.Store,
+		host:            opts.Host,
+		log:             opts.Log.With("component", "stats"),
+		timeout:         opts.Timeout,
+		refreshInterval: opts.RefreshInterval,
 		inflight:        map[string]*refresh{},
 	}
 }
 
-// HostStats liefert die Kennzahlen des Wirtssystems, notfalls nach einem
-// frisch angestoßenen Sammelvorgang.
+// HostStats returns the host's figures, collecting them first if necessary.
 func (c *Collector) HostStats(ctx context.Context) (json.RawMessage, error) {
 	return c.cachedOrRefresh(ctx, HostStatsKey, c.refreshHost)
 }
 
-// ContainerStats liefert den Ringpuffer der letzten Messungen eines Containers.
+// ContainerStats returns the ring buffer of a container's most recent samples.
 func (c *Collector) ContainerStats(ctx context.Context, containerID string) (json.RawMessage, error) {
 	key := containerID + ContainerStatsSufix
 
@@ -112,8 +110,7 @@ func (c *Collector) ContainerStats(ctx context.Context, containerID string) (jso
 	})
 }
 
-// cachedOrRefresh gibt den zwischengespeicherten Wert zurück oder wartet auf
-// einen Sammelvorgang.
+// cachedOrRefresh returns the cached value or waits for a collection.
 func (c *Collector) cachedOrRefresh(
 	ctx context.Context,
 	key string,
@@ -149,8 +146,8 @@ func (c *Collector) cachedOrRefresh(
 		return raw, nil
 	}
 
-	// Kein Wert vorhanden: die Ursache aus dem Sammelvorgang ist
-	// aussagekräftiger als eine abgelaufene Frist.
+	// No value present: the collection's cause is more informative than an
+	// expired deadline.
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -158,11 +155,10 @@ func (c *Collector) cachedOrRefresh(
 	return nil, ErrTimeout
 }
 
-// startRefresh stößt einen Sammelvorgang an oder liefert den Kanal eines
-// bereits laufenden.
+// startRefresh starts a collection or returns the channel of one already running.
 //
-// Der Kanal wird geschlossen, sobald die erste Messung geschrieben ist – die
-// wartende Anfrage muss die zweite Messung nicht abwarten.
+// The channel is closed as soon as the first measurement has been written — the
+// waiting request does not have to sit through the second one.
 func (c *Collector) startRefresh(key string, collect func(context.Context) error) *refresh {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -175,23 +171,23 @@ func (c *Collector) startRefresh(key string, collect func(context.Context) error
 	c.inflight[key] = r
 
 	go func() {
-		// Der Sammelvorgang überdauert die auslösende Anfrage.
+		// The collection outlives the request that triggered it.
 		ctx, cancel := context.WithTimeout(context.Background(), c.refreshInterval+time.Minute)
 		defer cancel()
 
 		if err := collect(ctx); err != nil {
-			c.logger.Error("collecting stats failed", "key", key, "error", err)
+			c.log.Error("collecting stats failed", "key", key, "err", err)
 			r.err = err
 		}
 
 		close(r.done)
 
-		// Wie im Original folgt eine zweite Messung, damit der Ringpuffer
-		// zwischen zwei Anfragen wächst.
+		// As in the original a second measurement follows, so the ring buffer
+		// grows between two requests.
 		select {
 		case <-time.After(c.refreshInterval):
 			if err := collect(ctx); err != nil {
-				c.logger.Error("collecting stats failed", "key", key, "error", err)
+				c.log.Error("collecting stats failed", "key", key, "err", err)
 			}
 		case <-ctx.Done():
 		}
@@ -204,26 +200,26 @@ func (c *Collector) startRefresh(key string, collect func(context.Context) error
 	return r
 }
 
-// refreshHost sammelt die Kennzahlen des Wirtssystems und legt sie ab.
+// refreshHost collects the host's figures and stores them.
 func (c *Collector) refreshHost(ctx context.Context) error {
 	stats, err := c.host.Collect(ctx)
 	if err != nil {
-		return fmt.Errorf("collect host stats: %w", err)
+		return fmt.Errorf("collecting the host statistics: %w", err)
 	}
 
 	raw, err := json.Marshal(stats)
 	if err != nil {
-		return fmt.Errorf("encode host stats: %w", err)
+		return fmt.Errorf("encoding the host statistics: %w", err)
 	}
 
 	return c.store.Set(ctx, HostStatsKey, raw, HostStatsTTL)
 }
 
-// refreshContainer hängt eine Messung an den Ringpuffer des Containers an.
+// refreshContainer appends a measurement to the container's ring buffer.
 func (c *Collector) refreshContainer(ctx context.Context, containerID string) error {
 	sample, err := c.docker.Stats(ctx, containerID)
 	if err != nil {
-		return fmt.Errorf("collect container stats: %w", err)
+		return fmt.Errorf("collecting the container statistics: %w", err)
 	}
 
 	key := containerID + ContainerStatsSufix
@@ -236,15 +232,14 @@ func (c *Collector) refreshContainer(ctx context.Context, containerID string) er
 
 	raw, err := json.Marshal(samples)
 	if err != nil {
-		return fmt.Errorf("encode container stats: %w", err)
+		return fmt.Errorf("encoding the container statistics: %w", err)
 	}
 
 	return c.store.Set(ctx, key, raw, ContainerStatsTTL)
 }
 
-// loadSamples liest den bestehenden Ringpuffer. Unlesbare Inhalte werden
-// verworfen, damit ein beschädigter Eintrag den Container nicht dauerhaft
-// blockiert.
+// loadSamples reads the existing ring buffer. Unreadable content is discarded, so
+// one damaged entry does not block a container permanently.
 func (c *Collector) loadSamples(ctx context.Context, key string) []json.RawMessage {
 	raw, ok, err := c.store.Get(ctx, key)
 	if err != nil || !ok {
@@ -253,7 +248,7 @@ func (c *Collector) loadSamples(ctx context.Context, key string) []json.RawMessa
 
 	var samples []json.RawMessage
 	if err := json.Unmarshal(raw, &samples); err != nil {
-		c.logger.Warn("discarding unreadable stats buffer", "key", key, "error", err)
+		c.log.Warn("discarding unreadable stats buffer", "key", key, "err", err)
 		return nil
 	}
 

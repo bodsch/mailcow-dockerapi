@@ -13,10 +13,10 @@ func TestTargetValid(t *testing.T) {
 		t    Target
 		want bool
 	}{
-		{"nur id", Target{ContainerID: "abc"}, true},
-		{"nur name", Target{ContainerName: "postfix-mailcow"}, true},
-		{"beides", Target{ContainerID: "abc", ContainerName: "x"}, true},
-		{"nichts", Target{}, false},
+		{"id only", Target{ContainerID: "abc"}, true},
+		{"name only", Target{ContainerName: "postfix-mailcow"}, true},
+		{"both", Target{ContainerID: "abc", ContainerName: "x"}, true},
+		{"neither", Target{}, false},
 	}
 
 	for _, tt := range tests {
@@ -28,8 +28,7 @@ func TestTargetValid(t *testing.T) {
 	}
 }
 
-// DockerApi.py prüft container_id zuerst; ein zusätzlich gesetzter Name bleibt
-// dann unberücksichtigt.
+// DockerApi.py checks container_id first; a name set alongside it is ignored.
 func TestFiltersForPrefersID(t *testing.T) {
 	f, err := filtersFor(Target{ContainerID: "abc123", ContainerName: "postfix-mailcow"})
 	if err != nil {
@@ -37,10 +36,10 @@ func TestFiltersForPrefersID(t *testing.T) {
 	}
 
 	if !f["id"]["abc123"] {
-		t.Errorf("id-Filter fehlt: %v", f)
+		t.Errorf("the id filter is missing: %v", f)
 	}
 	if _, ok := f["name"]; ok {
-		t.Errorf("name-Filter darf nicht gesetzt sein: %v", f)
+		t.Errorf("the name filter must not be set: %v", f)
 	}
 }
 
@@ -51,7 +50,7 @@ func TestFiltersForName(t *testing.T) {
 	}
 
 	if !f["name"]["postfix-mailcow"] {
-		t.Errorf("name-Filter fehlt: %v", f)
+		t.Errorf("the name filter is missing: %v", f)
 	}
 }
 
@@ -61,29 +60,29 @@ func TestFiltersForEmptyTarget(t *testing.T) {
 	}
 }
 
-// readUntilIdle beendet das Sammeln, wenn für die Leerlaufspanne nichts mehr
-// eintrifft – der Schreiber hält die Verbindung danach absichtlich offen.
+// readUntilIdle stops collecting once nothing arrives for the idle span — the
+// writer deliberately keeps the connection open afterwards.
 func TestReadUntilIdleStopsAfterSilence(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
 
 	go func() {
-		server.Write([]byte("erste "))
+		_, _ = server.Write([]byte("first "))
 		time.Sleep(20 * time.Millisecond)
-		server.Write([]byte("zweite"))
-		// Danach Stille: readUntilIdle muss von selbst zurückkehren.
+		_, _ = server.Write([]byte("second"))
+		// Silence from here on: readUntilIdle has to return on its own.
 	}()
 
 	start := time.Now()
 	got := readUntilIdle(client, 100*time.Millisecond)
 	elapsed := time.Since(start)
 
-	if string(got) != "erste zweite" {
-		t.Errorf("gelesen = %q, want %q", got, "erste zweite")
+	if string(got) != "first second" {
+		t.Errorf("read = %q, want %q", got, "first second")
 	}
 	if elapsed > 2*time.Second {
-		t.Errorf("Dauer = %v, zu lang", elapsed)
+		t.Errorf("took %v, too long", elapsed)
 	}
 }
 
@@ -92,12 +91,12 @@ func TestReadUntilIdleReturnsOnClose(t *testing.T) {
 	defer client.Close()
 
 	go func() {
-		server.Write([]byte("fertig"))
-		server.Close()
+		_, _ = server.Write([]byte("done"))
+		_ = server.Close()
 	}()
 
-	if got := readUntilIdle(client, time.Second); string(got) != "fertig" {
-		t.Errorf("gelesen = %q, want %q", got, "fertig")
+	if got := readUntilIdle(client, time.Second); string(got) != "done" {
+		t.Errorf("read = %q, want %q", got, "done")
 	}
 }
 
@@ -110,9 +109,9 @@ func TestReadUntilIdleHandlesSilentPeer(t *testing.T) {
 	got := readUntilIdle(client, 50*time.Millisecond)
 
 	if len(got) != 0 {
-		t.Errorf("gelesen = %q, want leer", got)
+		t.Errorf("read = %q, want empty", got)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("Dauer = %v, zu lang", elapsed)
+		t.Errorf("took %v, too long", elapsed)
 	}
 }

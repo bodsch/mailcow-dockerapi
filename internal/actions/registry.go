@@ -2,11 +2,10 @@ package actions
 
 import "strings"
 
-// Registry bildet die Methodennamen aus DockerApi.py auf die portierten
-// Funktionen ab.
+// Registry maps the method names from DockerApi.py onto the ported functions.
 //
-// Die Schlüssel sind unverändert übernommen: mailcow bildet sie im PHP-Code
-// und in den PubSub-Nachrichten selbst und erwartet genau diese Bezeichner.
+// The keys are taken over unchanged: mailcow builds them itself, in its PHP code
+// and in its PubSub messages, and expects exactly these identifiers.
 var Registry = map[string]Func{
 	"container_post__stop":    Stop,
 	"container_post__start":   Start,
@@ -47,20 +46,20 @@ var Registry = map[string]Func{
 	"container_post__exec__doveadm__set_acl":    DoveadmSetACL,
 }
 
-// MsgUnknownAPICall ist die Meldung für einen nicht auflösbaren Namen.
+// MsgUnknownAPICall is the message for a name that does not resolve.
 const MsgUnknownAPICall = "container_post - unknown api call"
 
-// Lookup schlägt eine Action nach.
+// Lookup resolves an action.
 func Lookup(name string) (Func, bool) {
 	fn, ok := Registry[name]
 	return fn, ok
 }
 
-// MethodName bildet den Namen einer Action, so wie main.py:155 und main.py:222
-// ihn zusammensetzten.
+// MethodName builds an action's name the way main.py:155 and main.py:222 composed
+// it.
 //
-// Für post_action "exec" fließen zusätzlich cmd und task ein, für alles andere
-// nur die Aktion selbst.
+// For the post_action "exec", cmd and task are part of the name; for anything else
+// only the action itself is.
 func MethodName(postAction, cmd, task string) string {
 	if postAction == "exec" {
 		return strings.Join([]string{"container_post", postAction, cmd, task}, "__")

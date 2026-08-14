@@ -1,18 +1,23 @@
 # mailcow-dockerapi Makefile
 #
 # All build/test/quality logic lives here so CI configs stay thin wrappers that
-# only invoke `make` targets. The target set is shared with mailcow-watchdog —
-# see CONVENTIONS.md.
+# only invoke `make` targets.
+#
+# Everything below the variable block is identical to the Makefile in
+# mailcow-watchdog, apart from the service-specific targets at the very bottom.
+# Change it in one repository, then copy it to the other — see CONVENTIONS.md.
 
-BINARY      := dockerapi
-CMD_PKG     := ./cmd/dockerapi/
-BIN_DIR     := bin
-DIST_DIR    := dist
+BINARY   := dockerapi
+CMD_PKG  := ./cmd/dockerapi/
+IMAGE    := mailcow/dockerapi
 
-IMAGE       := mailcow-dockerapi
+# --- shared from here on ------------------------------------------------------
+
+BIN_DIR  := bin
+DIST_DIR := dist
 
 # Version metadata, overridable from the environment / CI.
-VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
@@ -22,8 +27,8 @@ export CGO_ENABLED := 0
 # The container only ever runs on Linux; the others are for local development.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-GO         := go
-GOLANGCI   := golangci-lint
+GO       := go
+GOLANGCI := golangci-lint
 
 .DEFAULT_GOAL := build
 
@@ -33,7 +38,7 @@ help: ## Show this help.
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
-build: ## Build the dockerapi binary into bin/.
+build: ## Build the binary into bin/.
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(BINARY) $(CMD_PKG)
 

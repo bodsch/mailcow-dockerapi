@@ -36,8 +36,8 @@ fi
 cleanup
 
 echo "==> building the images"
-docker build -q -t mailcow-dockerapi:compare-go . >/dev/null
-docker build -q -t mailcow-dockerapi:compare-py ./original/dockerapi >/dev/null
+docker build -q -t mailcow/dockerapi:compare-go . >/dev/null
+docker build -q -t mailcow/dockerapi:compare-py ./original/dockerapi >/dev/null
 
 echo "==> starting the environment"
 docker network create "$NET" >/dev/null
@@ -55,8 +55,8 @@ common=(
   -e DBROOT=comparepass
 )
 
-docker run -d --name "$GO" "${common[@]}" -p "$GO_PORT:443" mailcow-dockerapi:compare-go >/dev/null
-docker run -d --name "$PY" "${common[@]}" -p "$PY_PORT:443" mailcow-dockerapi:compare-py >/dev/null
+docker run -d --name "$GO" "${common[@]}" -p "$GO_PORT:443" mailcow/dockerapi:compare-go >/dev/null
+docker run -d --name "$PY" "${common[@]}" -p "$PY_PORT:443" mailcow/dockerapi:compare-py >/dev/null
 
 echo "==> waiting for readiness"
 for _ in $(seq 1 60); do

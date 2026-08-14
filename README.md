@@ -196,7 +196,7 @@ docker run --rm \
   -e REDISPASS=... \
   -e DBROOT=... \
   -p 8443:443 \
-  mailcow-dockerapi:latest
+  mailcow/dockerapi:latest
 ```
 
 The service needs access to the Docker socket and thereby controls every container

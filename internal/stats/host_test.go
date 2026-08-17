@@ -15,6 +15,10 @@ import (
 
 // SystemHost reads real system values; what is checked is their plausibility and,
 // above all, the format the mailcow UI builds on.
+//
+// The clock is pinned because SystemTime's rendering is an exact expectation. That
+// makes every value derived from both the clock and the system unusable here, which
+// is why Uptime has a test of its own.
 func TestSystemHostCollect(t *testing.T) {
 	fixed := time.Date(2026, 8, 14, 9, 5, 3, 0, time.UTC)
 	h := SystemHost{Now: func() time.Time { return fixed }}
@@ -36,9 +40,9 @@ func TestSystemHostCollect(t *testing.T) {
 	if got.Memory.Usage < 0 || got.Memory.Usage > 100 {
 		t.Errorf("Memory.Usage = %v, want 0..100", got.Memory.Usage)
 	}
-	if got.Uptime <= 0 {
-		t.Errorf("Uptime = %v, want a positive value", got.Uptime)
-	}
+
+	// Uptime is deliberately not checked here — see TestSystemHostUptime. It is
+	// now minus the boot time, and "now" is pinned in this test.
 
 	if got.SystemTime != "14.08.2026 09:05:03" {
 		t.Errorf("SystemTime = %q, want %q", got.SystemTime, "14.08.2026 09:05:03")
@@ -47,6 +51,30 @@ func TestSystemHostCollect(t *testing.T) {
 	// psutil.swap_memory() is a named tuple with six fields.
 	if len(got.Memory.Swap) != 6 {
 		t.Errorf("Swap has %d fields, want 6: %v", len(got.Memory.Swap), got.Memory.Swap)
+	}
+}
+
+// Uptime is time.time() - psutil.boot_time(), so it can only be judged against the
+// clock the boot time came from.
+//
+// This check used to sit in TestSystemHostCollect, against its pinned date. That
+// held only until a machine booted later than the pinned day: from then on the
+// difference was negative and the test failed by calendar rather than by code —
+// everywhere, CI included, since a runner always boots today.
+func TestSystemHostUptime(t *testing.T) {
+	got, err := SystemHost{}.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if got.Uptime <= 0 {
+		t.Errorf("Uptime = %v, want a positive value", got.Uptime)
+	}
+
+	// A decade of uptime means the boot time was misread rather than that the host
+	// is old, which is the failure this bound is here to catch.
+	if decade := (10 * 365 * 24 * time.Hour).Seconds(); got.Uptime > decade {
+		t.Errorf("Uptime = %v, implausible — more than %v seconds", got.Uptime, decade)
 	}
 }
 

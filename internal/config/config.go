@@ -146,5 +146,33 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("LOG_FORMAT must be python, json or text (got %q)", c.Log.Format)
 	}
+	if err := validateListen("DOCKERAPI_LISTEN", c.Server.Listen); err != nil {
+		return err
+	}
+	if err := validateListen("DOCKERAPI_METRICS_LISTEN", c.Obs.Listen); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateListen rejects an address net.Listen would reject anyway, and does it
+// where the variable can still be named.
+//
+// The mistake worth catching by name is a URL. These variables hold the address to
+// bind, not the address to talk to — the endpoint paths are fixed and a scheme has
+// nowhere to go — and net.Listen answers a URL with "too many colons in address",
+// which is not a sentence that leads anyone to their own configuration.
+func validateListen(name, addr string) error {
+	if addr == "" {
+		// Empty is how the metrics endpoint is switched off. DOCKERAPI_LISTEN is
+		// checked for emptiness separately, above.
+		return nil
+	}
+	if strings.Contains(addr, "/") {
+		return fmt.Errorf("%s must be a listen address such as \":9394\", not a URL (got %q)", name, addr)
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("%s must be a host:port address such as \":9394\" (got %q): %w", name, addr, err)
+	}
 	return nil
 }

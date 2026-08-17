@@ -139,6 +139,17 @@ is the metric to alert on after a mailcow upgrade.
 
 The first six names come from the Python implementation and are unchanged.
 
+`DOCKERAPI_METRICS_LISTEN` is an address to **bind**, not a URL to scrape: `":9394"`, or
+`"127.0.0.1:9394"` to keep it off the network. A URL such as
+`http://127.0.0.1:9394/metrics` is rejected at startup — the paths of the three
+endpoints are fixed and a scheme has nowhere to go.
+
+Inside a container, `127.0.0.1` is the container's own loopback. A published port
+(`-p 9394:9394`) forwards to the container's bridge address instead, finds
+nothing listening there, and a scrape fails with a **reset connection** rather than
+a refused one — which reads like a server problem and is not one. Bind `":9394"`
+when the endpoint has to be reachable from outside the container.
+
 `:9394` sits deliberately outside 9100-9999, the Prometheus project's fully
 allocated exporter registry, and avoids every port mailcow uses internally. The
 watchdog serves the same three endpoints one port below, on 9393.

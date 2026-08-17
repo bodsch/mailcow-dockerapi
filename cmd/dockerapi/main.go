@@ -35,8 +35,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
-// version is set at build time from the Makefile.
-var version = "dev"
+// version and buildDate are set at build time, from the Makefile or from CI,
+// with -X. The fallbacks are what a plain `go build` produces, and they are
+// spelled out rather than left empty so a metric label always has a value.
+var (
+	version   = "dev"
+	buildDate = "unknown"
+)
 
 const (
 	// shutdownTimeout bounds the wait for in-flight requests when stopping.
@@ -68,6 +73,7 @@ func run() error {
 	slog.SetDefault(log)
 	log.Info("mailcow dockerapi starting",
 		"version", version,
+		"build_date", buildDate,
 		"listen", cfg.Server.Listen,
 		"docker", cfg.Docker.Host,
 		"log_level", cfg.Log.Level)
@@ -82,7 +88,7 @@ func run() error {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
-	m := metrics.New(registry, version)
+	m := metrics.New(registry, metrics.Build{Version: version, Date: buildDate})
 
 	readiness := &obs.Readiness{}
 	obsServer := obs.New(obs.Options{

@@ -130,7 +130,7 @@ func TestBuildInstallsThePeerResolvingErrorLog(t *testing.T) {
 
 	deps := &dependencies{docker: fake, env: actions.Env{Docker: fake, Log: log}}
 
-	srv, err := build(cfg, deps, metrics.New(prometheus.NewRegistry(), "test"), log)
+	srv, err := build(cfg, deps, metrics.New(prometheus.NewRegistry(), metrics.Build{Version: "test"}), log)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

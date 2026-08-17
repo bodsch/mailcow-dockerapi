@@ -54,7 +54,7 @@ func newServerWithRegistry(fake *dockertest.Fake, stats *fakeStats) (*Server, *p
 		Docker:  fake,
 		Stats:   stats,
 		Env:     actions.Env{Docker: fake, Log: log},
-		Metrics: metrics.New(reg, "test"),
+		Metrics: metrics.New(reg, metrics.Build{Version: "test"}),
 		Log:     log,
 	})
 

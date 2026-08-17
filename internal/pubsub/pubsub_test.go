@@ -37,7 +37,7 @@ func newSubscriberWithRegistry(t *testing.T, fake *dockertest.Fake) (*Subscriber
 	sub := New(Options{
 		Channel: testChannel,
 		Env:     actions.Env{Docker: fake, Log: log},
-		Metrics: metrics.New(reg, "test"),
+		Metrics: metrics.New(reg, metrics.Build{Version: "test"}),
 		Log:     log,
 	})
 

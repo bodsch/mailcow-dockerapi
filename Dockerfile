@@ -18,10 +18,18 @@ RUN go mod download && go mod verify
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
+# VERSION is the only way the version reaches the binary: `git describe` cannot
+# run here, because .dockerignore keeps .git out of the build context. The CI
+# passes the tag; a plain `docker build` yields "dev", which is honest.
 ARG VERSION=dev
+ARG BUILD_DATE=unknown
 ENV CGO_ENABLED=0 GOOS=linux
 
-RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+# ${VERSION:-dev} guards against an explicitly empty --build-arg VERSION=, which
+# would stamp an empty string and read as a broken build rather than an unstamped
+# one.
+RUN go build -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION:-dev} -X main.buildDate=${BUILD_DATE:-unknown}" \
       -o /out/dockerapi ./cmd/dockerapi
 
 

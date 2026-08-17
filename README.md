@@ -98,6 +98,8 @@ The same thing goes to `MC_CHANNEL` over Redis, there with the container **name*
   requests and latency per route pattern, actions by registry name and by the
   channel they arrived through, rejected calls by reason, PubSub messages by
   outcome, and statistics requests by kind.
+  `mailcow_dockerapi_build_info{version,build_date}` identifies the running
+  binary — see [Version stamping](#version-stamping).
 - **`/healthz` and `/readyz`.** Liveness deliberately does *not* depend on Redis or
   the Docker daemon — otherwise an outage there would have the orchestrator kill
   the very thing reporting on it. Readiness stays negative until Redis answers.
@@ -146,6 +148,27 @@ watchdog serves the same three endpoints one port below, on 9393.
 If the certificate pair is missing, the service creates one at startup (RSA 4096,
 SHA-256, 3650 days, `CN=dockerapi`, `subjectAltName=DNS:dockerapi`) — the same
 values `docker-entrypoint.sh` passed to `openssl`.
+
+---
+
+## Version stamping
+
+`version` and `build_date` are linked into the binary with `-X`; they appear in the
+startup line and as the labels of `mailcow_dockerapi_build_info`. Every build path
+stamps them:
+
+| Build | Version | Date |
+|---|---|---|
+| `make build` / `make release` | `git describe --tags --always --dirty` | UTC day |
+| `make image` | same, via `--build-arg` | same |
+| Release workflow (tag) | the tag | UTC day |
+| Container workflow (tag) | the tag | UTC day |
+| plain `go build` | `dev` | `unknown` |
+
+An image reporting `version="dev"` was therefore built without its build
+arguments — `docker build` without `--build-arg VERSION=…`, or a CI step that
+forgets to pass them. The date is a UTC day rather than a timestamp so two builds
+of the same release stay comparable.
 
 ---
 

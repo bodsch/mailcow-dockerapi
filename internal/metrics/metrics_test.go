@@ -8,7 +8,7 @@ import (
 )
 
 func TestObserveHTTP(t *testing.T) {
-	m := New(prometheus.NewRegistry(), "test")
+	m := New(prometheus.NewRegistry(), Build{Version: "test"})
 
 	m.ObserveHTTP("GET /host/stats", 0.01)
 	m.ObserveHTTP("GET /host/stats", 0.02)
@@ -19,7 +19,7 @@ func TestObserveHTTP(t *testing.T) {
 }
 
 func TestObserveAction(t *testing.T) {
-	m := New(prometheus.NewRegistry(), "test")
+	m := New(prometheus.NewRegistry(), Build{Version: "test"})
 
 	m.ObserveAction("container_post__exec__mailq__flush", SourcePubSub, 1.5)
 	m.ObserveAction("container_post__restart", SourceHTTP, 0.4)
@@ -35,7 +35,7 @@ func TestObserveAction(t *testing.T) {
 // A rising unknown_call is the signal that the frontend expects calls this build
 // does not implement, so it has its own counter rather than only a log line.
 func TestObserveRejected(t *testing.T) {
-	m := New(prometheus.NewRegistry(), "test")
+	m := New(prometheus.NewRegistry(), Build{Version: "test"})
 
 	m.ObserveRejected(ReasonUnknownCall, SourceHTTP)
 	m.ObserveRejected(ReasonUnknownCall, SourceHTTP)
@@ -50,7 +50,7 @@ func TestObserveRejected(t *testing.T) {
 }
 
 func TestObservePubSub(t *testing.T) {
-	m := New(prometheus.NewRegistry(), "test")
+	m := New(prometheus.NewRegistry(), Build{Version: "test"})
 
 	m.ObservePubSub(PubSubHandled)
 	m.ObservePubSub(PubSubMalformed)
@@ -68,7 +68,7 @@ func TestObservePubSub(t *testing.T) {
 }
 
 func TestObserveStats(t *testing.T) {
-	m := New(prometheus.NewRegistry(), "test")
+	m := New(prometheus.NewRegistry(), Build{Version: "test"})
 
 	m.ObserveStats("host", "hit")
 	m.ObserveStats("container", "miss")
@@ -83,7 +83,9 @@ func TestObserveStats(t *testing.T) {
 
 func TestBuildInfo(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	New(reg, "1.2.3")
+	New(reg, Build{Version: "1.2.3", Date: "2026-08-17"})
+
+	want := map[string]string{"version": "1.2.3", "build_date": "2026-08-17"}
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -94,14 +96,19 @@ func TestBuildInfo(t *testing.T) {
 			continue
 		}
 		for _, metric := range family.GetMetric() {
+			got := map[string]string{}
 			for _, label := range metric.GetLabel() {
-				if label.GetName() == "version" && label.GetValue() == "1.2.3" {
-					return
+				got[label.GetName()] = label.GetValue()
+			}
+			for name, value := range want {
+				if got[name] != value {
+					t.Errorf("build_info label %s = %q, want %q", name, got[name], value)
 				}
 			}
+			return
 		}
 	}
-	t.Error("build_info does not carry the version")
+	t.Error("build_info was not exposed at all")
 }
 
 // Instrumentation is optional: the packages that record metrics are also used in

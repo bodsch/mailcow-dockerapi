@@ -3,8 +3,13 @@ package dockerclient
 import (
 	"errors"
 	"net"
+	"net/netip"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 )
 
 func TestTargetValid(t *testing.T) {
@@ -113,5 +118,46 @@ func TestReadUntilIdleHandlesSilentPeer(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("took %v, too long", elapsed)
+	}
+}
+
+// The endpoints come from GET /containers/json, so internal/peers can name the
+// container behind a remote address without an extra call per lookup.
+func TestToEndpointsCollectsTheAddresses(t *testing.T) {
+	v4 := netip.MustParseAddr("172.22.1.12")
+	v6 := netip.MustParseAddr("fd4d:6169:6c63:6f77::12")
+
+	got := toEndpoints(&container.NetworkSettingsSummary{
+		Networks: map[string]*network.EndpointSettings{
+			"mailcowdockerized_mailcow-network": {IPAddress: v4, GlobalIPv6Address: v6},
+			// A network the container is attached to but has no address on yet.
+			"bridge": {},
+			// The daemon has been known to report a network without settings.
+			"broken": nil,
+		},
+	})
+
+	want := []Endpoint{
+		{Network: "bridge"},
+		{Network: "mailcowdockerized_mailcow-network", IPs: []string{"172.22.1.12", "fd4d:6169:6c63:6f77::12"}},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("toEndpoints() = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i].Network != want[i].Network {
+			t.Errorf("endpoint %d network = %q, want %q (the order is sorted by name)", i, got[i].Network, want[i].Network)
+		}
+		if !slices.Equal(got[i].IPs, want[i].IPs) {
+			t.Errorf("endpoint %d IPs = %v, want %v", i, got[i].IPs, want[i].IPs)
+		}
+	}
+}
+
+// A container in the host's namespace has no network section at all.
+func TestToEndpointsWithoutNetworks(t *testing.T) {
+	if got := toEndpoints(nil); got != nil {
+		t.Errorf("toEndpoints(nil) = %+v, want nil", got)
 	}
 }

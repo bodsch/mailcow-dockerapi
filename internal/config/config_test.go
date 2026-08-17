@@ -167,6 +167,17 @@ func TestLoadRejects(t *testing.T) {
 		}, "must not be the same file"},
 		{"the log level is unknown", map[string]string{"LOG_LEVEL": "chatty"}, "LOG_LEVEL"},
 		{"the log format is unknown", map[string]string{"LOG_FORMAT": "yaml"}, "LOG_FORMAT"},
+		// Both variables hold an address to bind, and both names read like they
+		// want the URL a client would use.
+		{"the metrics endpoint is a URL", map[string]string{
+			"DOCKERAPI_METRICS_LISTEN": "http://127.0.0.1:9394/metrics",
+		}, "not a URL"},
+		{"the metrics endpoint has no port", map[string]string{
+			"DOCKERAPI_METRICS_LISTEN": "9394",
+		}, "must be a host:port address"},
+		{"the server address is a URL", map[string]string{
+			"DOCKERAPI_LISTEN": "https://0.0.0.0:443/",
+		}, "not a URL"},
 	}
 
 	for _, tt := range tests {
@@ -177,6 +188,22 @@ func TestLoadRejects(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wants) {
 				t.Errorf("Load: error %q does not mention %q", err, tt.wants)
+			}
+		})
+	}
+}
+
+// The address forms an operator actually uses have to survive validation —
+// including the empty metrics address, which switches that endpoint off.
+func TestLoadAcceptsTheUsualListenAddresses(t *testing.T) {
+	for _, addr := range []string{":9394", "127.0.0.1:9394", "0.0.0.0:9394", "[::1]:9394", ""} {
+		t.Run("metrics "+addr, func(t *testing.T) {
+			cfg := loadWith(t, map[string]string{"DOCKERAPI_METRICS_LISTEN": addr})
+
+			// A blank value counts as unset and falls back to the default, so
+			// only a non-empty one is compared.
+			if addr != "" && cfg.Obs.Listen != addr {
+				t.Errorf("Obs.Listen = %q, want %q", cfg.Obs.Listen, addr)
 			}
 		})
 	}

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
 
@@ -80,8 +82,47 @@ func (m *mobyAPI) ListAll(ctx context.Context, all bool) ([]Container, error) {
 func toContainers(res client.ContainerListResult) []Container {
 	out := make([]Container, 0, len(res.Items))
 	for _, item := range res.Items {
-		out = append(out, Container{ID: item.ID, Names: item.Names, State: string(item.State)})
+		out = append(out, Container{
+			ID:        item.ID,
+			Names:     item.Names,
+			State:     string(item.State),
+			Labels:    item.Labels,
+			Endpoints: toEndpoints(item.NetworkSettings),
+		})
 	}
+	return out
+}
+
+// toEndpoints collects the container's network attachments. A container that is
+// on no network of its own — one sharing the host's namespace, say — has none,
+// and the daemon may leave the whole section out.
+func toEndpoints(ns *container.NetworkSettingsSummary) []Endpoint {
+	if ns == nil {
+		return nil
+	}
+
+	out := make([]Endpoint, 0, len(ns.Networks))
+	for name, settings := range ns.Networks {
+		if settings == nil {
+			continue
+		}
+
+		ep := Endpoint{Network: name}
+		// A container that is attached but not yet running has an endpoint
+		// without an address; netip.Addr renders that as "invalid IP".
+		if settings.IPAddress.IsValid() {
+			ep.IPs = append(ep.IPs, settings.IPAddress.String())
+		}
+		if settings.GlobalIPv6Address.IsValid() {
+			ep.IPs = append(ep.IPs, settings.GlobalIPv6Address.String())
+		}
+		out = append(out, ep)
+	}
+
+	// Map iteration is randomised and these end up in log lines, so the order is
+	// fixed here rather than differing from one call to the next.
+	slices.SortFunc(out, func(a, b Endpoint) int { return strings.Compare(a.Network, b.Network) })
+
 	return out
 }
 

@@ -40,6 +40,26 @@ type Container struct {
 	ID    string
 	Names []string
 	State string
+
+	// Labels are the container's labels. Compose puts the service name into
+	// com.docker.compose.service, which is how internal/peers names a peer that
+	// mailcow started.
+	Labels map[string]string
+
+	// Endpoints are the networks the container is attached to.
+	Endpoints []Endpoint
+}
+
+// Endpoint is a container's attachment to one Docker network.
+//
+// GET /containers/json reports these along with everything else, so collecting
+// them costs no additional call. internal/peers turns them into the mapping from
+// a remote address to the container behind it.
+type Endpoint struct {
+	// Network is the network's name, such as mailcowdockerized_mailcow-network.
+	Network string
+	// IPs are the container's addresses on that network, IPv4 before IPv6.
+	IPs []string
 }
 
 // ExecOptions describes a single `docker exec`.

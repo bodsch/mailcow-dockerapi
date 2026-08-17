@@ -42,6 +42,7 @@ internal/config/        the mailcow.conf environment, typed and validated
 internal/actions/       the 29 container operations and their registry
 internal/api/           HTTP routes and response encoding
 internal/dockerclient/  Docker access behind a narrow interface
+internal/peers/         the container behind a remote address, for the log
 internal/stats/         host and container measurements
 internal/store/         the Redis cache
 internal/pubsub/        the receiver for MC_CHANNEL
@@ -102,6 +103,12 @@ The same thing goes to `MC_CHANNEL` over Redis, there with the container **name*
   the very thing reporting on it. Readiness stays negative until Redis answers.
 - **Selectable log format** via `LOG_LEVEL` and `LOG_FORMAT`. The Python format
   stays the default so existing log processing keeps working.
+- **Connection errors name the container.** A failed TLS handshake used to read
+  `http: TLS handshake error from 172.22.1.12:58798: EOF` — an address that
+  belongs to a different container after every restart. `internal/peers` resolves
+  it through the container listing (`com.docker.compose.service` included) and
+  falls back to the daemon's embedded DNS, so the line carries `peer_container`,
+  `peer_service` and `peer_network`. See [Operation](#operation).
 - **Graceful shutdown** on SIGINT/SIGTERM.
 - **Startup waits for Redis** instead of answering requests it cannot serve.
 
@@ -201,3 +208,35 @@ docker run --rm \
 
 The service needs access to the Docker socket and thereby controls every container
 on the host. It does not belong on an open network.
+
+### Who is connecting
+
+Connections come from other containers of the stack, so their addresses are
+resolved before they are logged — the container name, its compose service and the
+network are fields of the line:
+
+```json
+{"level":"WARN","msg":"the TLS handshake failed","component":"http",
+ "err":"tls: client offered only unsupported versions: [301]",
+ "peer_ip":"172.22.1.12","peer_port":"58798",
+ "peer_container":"mailcowdockerized-watchdog-mailcow-1",
+ "peer_service":"watchdog-mailcow","peer_network":"mailcowdockerized_mailcow-network"}
+```
+
+A peer that connects and hangs up without sending anything is a TCP port check —
+a container healthcheck or a watchdog asking whether `:443` is open, which repeats
+every few seconds for as long as the stack runs. Those lines are `debug`, not
+`info`:
+
+```sh
+LOG_LEVEL=debug docker logs -f dockerapi-mailcow | grep peer_container
+```
+
+An address with no `peer_container` belongs to no container of this daemon: a
+process in the host's namespace (it then shows the network's gateway address), or
+something behind the host's NAT — worth a look, because nothing inside mailcow
+reaches the service that way.
+
+The mapping is cached for 30 s and rebuilt from `GET /containers/json`, so a peer
+probing every few seconds costs one Docker call per half minute, not one per
+probe.

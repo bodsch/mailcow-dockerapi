@@ -26,6 +26,7 @@ import (
 	"bodsch.me/mailcow-dockerapi/internal/logging"
 	"bodsch.me/mailcow-dockerapi/internal/metrics"
 	"bodsch.me/mailcow-dockerapi/internal/obs"
+	"bodsch.me/mailcow-dockerapi/internal/peers"
 	"bodsch.me/mailcow-dockerapi/internal/pubsub"
 	"bodsch.me/mailcow-dockerapi/internal/stats"
 	"bodsch.me/mailcow-dockerapi/internal/store"
@@ -217,6 +218,11 @@ func build(cfg *config.Config, deps *dependencies, m *metrics.Metrics, log *slog
 		Log:     log,
 	}).Handler()
 
+	// Everything that reaches this service comes from another container in the
+	// mailcow network, so its addresses are worth resolving before they are
+	// logged.
+	resolver := peers.New(peers.Options{Docker: deps.docker, Log: log})
+
 	return &http.Server{
 		Addr:    cfg.Server.Listen,
 		Handler: handler,
@@ -225,6 +231,9 @@ func build(cfg *config.Config, deps *dependencies, m *metrics.Metrics, log *slog
 			MinVersion:   tls.VersionTLS12,
 		},
 		ReadHeaderTimeout: 10 * time.Second,
+		// Unset, the server's error lines would go out through log.Default() as
+		// one info line of plain text each. See internal/peers.
+		ErrorLog: resolver.HTTPErrorLog(log),
 	}, nil
 }
 

@@ -206,3 +206,15 @@ These look like bugs but stay as they are, because the frontend builds on them.
 - **Bounded request body.** At most 4 MiB; FastAPI had no limit.
 - **Graceful shutdown** on SIGINT and SIGTERM.
 - **Startup waits for Redis** rather than answering requests it cannot serve.
+- **Connection errors carry the peer's container.** uvicorn reported a failed TLS
+  handshake as a bare address, and so did this implementation as long as
+  `http.Server.ErrorLog` was unset — the line went out through `log.Default()`,
+  which `slog.SetDefault` points at the handler, as one info line of plain text.
+  `internal/peers` resolves the address instead, through `GET /containers/json`
+  with the daemon's embedded DNS as a fallback, and the line becomes
+  `the TLS handshake failed` with `peer_container`, `peer_service` and
+  `peer_network` as fields. A handshake that ends in `EOF` or a reset is a TCP port
+  check rather than a client — a healthcheck or a watchdog probing whether `:443`
+  is open, which repeats every few seconds for as long as the stack runs. Those
+  are logged at debug level, everything else at warn; the info level therefore
+  stays quiet where it used to fill up.

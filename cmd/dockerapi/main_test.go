@@ -5,12 +5,18 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"bodsch.me/mailcow-dockerapi/internal/actions"
 	"bodsch.me/mailcow-dockerapi/internal/config"
+	"bodsch.me/mailcow-dockerapi/internal/dockerclient"
+	"bodsch.me/mailcow-dockerapi/internal/dockerclient/dockertest"
 	"bodsch.me/mailcow-dockerapi/internal/logging"
+	"bodsch.me/mailcow-dockerapi/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // config.Log and logging.Options are converted into one another, which only
@@ -99,3 +105,42 @@ func discardLog() *slog.Logger {
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// A failed TLS handshake never reaches a handler, so http.Server.ErrorLog is the
+// only place it surfaces. The wiring that resolves the peer in those lines lives
+// in build, which is where a refactoring loses it silently.
+func TestBuildInstallsThePeerResolvingErrorLog(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Server: config.Server{
+			Listen:   ":0",
+			CertFile: filepath.Join(dir, "cert.pem"),
+			KeyFile:  filepath.Join(dir, "key.pem"),
+		},
+		Stats: config.Stats{Timeout: time.Second},
+	}
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	fake := dockertest.WithContainers("aaa", "mailcowdockerized-watchdog-mailcow-1")
+	fake.Containers[0].Endpoints = []dockerclient.Endpoint{
+		{Network: "mailcowdockerized_mailcow-network", IPs: []string{"172.22.1.12"}},
+	}
+
+	deps := &dependencies{docker: fake, env: actions.Env{Docker: fake, Log: log}}
+
+	srv, err := build(cfg, deps, metrics.New(prometheus.NewRegistry(), "test"), log)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if srv.ErrorLog == nil {
+		t.Fatal("ErrorLog is nil — the server's error lines would go out as plain text again")
+	}
+
+	srv.ErrorLog.Print("http: TLS handshake error from 172.22.1.12:58798: EOF")
+
+	if got := buf.String(); !strings.Contains(got, `"peer_container":"mailcowdockerized-watchdog-mailcow-1"`) {
+		t.Errorf("the log line %q does not name the container behind the address", got)
+	}
+}

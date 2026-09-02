@@ -165,7 +165,23 @@ These look like bugs but stay as they are, because the frontend builds on them.
   in turn, so the body reads `"50G,20G,..."` including the quotes — unlike every
   other action. On failure, `"0,0,0,0,0,0"`.
 - **Status code always 200.** Errors come with 200 too; what is evaluated is the
-  `type` field.
+  `type` field. This covers every reply a handler writes, which is every path a
+  mailcow client uses. It does not cover the two the router answers by itself: an
+  unknown path is 404 and a wrong method 405, each with a plain-text body, where
+  FastAPI replied `{"detail": ...}` as JSON. Left as it is — the codes are correct
+  HTTP and nothing calls those paths — but the sentence used to read as though
+  they were covered. `TestEveryHandlerAnswers200` and
+  `TestTheRouterAnswersOutsideThatPromise` hold both halves.
+- **`container_name` selects by substring, not by name.** It goes into Docker's
+  `name` filter, which matches any container whose name contains the value — and
+  `stop`, `start` and `restart` act on every match, as the original did. That is
+  what makes the watchdog work: it sends compose service names such as
+  `postfix-mailcow` while the containers are called
+  `mailcowdockerized-postfix-mailcow-1`, and a replica set is restarted as a
+  whole. The consequence is worth knowing before it surprises someone: a PubSub
+  message carrying `container_name: "mailcow"` matches every container in a
+  mailcow stack, and `"."` matches all of them anywhere. Requests over HTTP cannot
+  do this — that path takes a container id and rejects anything not alphanumeric.
 - **`maildir__move` appends `_index` to the destination only.** The source is
   `/var/vmail_index/<name>`, the destination `/var/vmail_index/<name>_index`
   (`DockerApi.py:363`).

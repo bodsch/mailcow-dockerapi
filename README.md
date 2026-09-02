@@ -71,7 +71,11 @@ interface. A test compares the registry against the method names in
 | POST | `/containers/{id}/{action}` | run an operation |
 | POST | `/container/{id}/stats/update` | a container's measurements (path is singular) |
 
-The status code is always 200; errors live in the body's `type` field.
+The status code is always 200 for anything a handler answers; errors live in the
+body's `type` field. Only the router answers otherwise — an unknown path is 404
+and a wrong method 405, both with a plain-text body, where FastAPI sent JSON.
+No mailcow client calls those paths; `TestTheRouterAnswersOutsideThatPromise`
+records the boundary.
 
 For `POST /containers/{id}/exec` the body names the operation:
 
